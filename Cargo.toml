@@ -1,0 +1,12 @@
+[package]
+name = "pepbut"
+version = "0.1.0"
+authors = ["Iliana Weller <ilianaw@buttslol.net>"]
+
+[profile.release]
+lto = true
+panic = 'abort'
+
+[dependencies]
+trust-dns = { version = "*", default-features = false }
+trust-dns-server = { version = "*", default-features = false }
