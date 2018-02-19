@@ -5,8 +5,10 @@ authors = ["Iliana Weller <ilianaw@buttslol.net>"]
 
 [profile.release]
 lto = true
-panic = 'abort'
+panic = "abort"
 
 [dependencies]
-trust-dns = { version = "*", default-features = false }
-trust-dns-server = { version = "*", default-features = false }
+lazy_static = "1.0"
+trust-dns = { git = "https://github.com/bluejekyll/trust-dns", default-features = false }
+trust-dns-proto = { git = "https://github.com/bluejekyll/trust-dns", default-features = false }
+trust-dns-server = { git = "https://github.com/bluejekyll/trust-dns", default-features = false }
