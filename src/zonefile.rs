@@ -8,9 +8,8 @@ static ZONE_MAGIC: [u16; 3] = [0x4845, 0x434b, 0x4f1a]; // HECKO\x1a
 
 #[cfg_attr(test, derive(Debug, PartialEq))]
 pub struct Zone {
+    soa_record: Record,
     records: Vec<Record>,
-    origin: Name,
-    serial: u32,
 }
 
 impl Zone {
@@ -19,7 +18,14 @@ impl Zone {
     }
 
     pub fn origin(&self) -> &Name {
-        &self.origin
+        self.soa_record.name()
+    }
+
+    pub fn serial(&self) -> u32 {
+        match *self.soa_record.rdata() {
+            RData::SOA(ref soa) => soa.serial(),
+            _ => unreachable!(),
+        }
     }
 
     /// Version 0 format:
@@ -32,13 +38,11 @@ impl Zone {
         let record_len = u32::read(decoder)? as usize;
         let mut records = Vec::with_capacity(record_len);
         let soa_record = Record::read(decoder)?;
-        let (origin, serial) = match *soa_record.rdata() {
-            RData::SOA(ref soa) => (soa_record.name().clone(), soa.serial()),
-            _ => return Err("first record must be SOA".into()),
-        };
+        if soa_record.rr_type() != RecordType::SOA {
+            return Err("first record must be SOA".into());
+        }
         // TODO verify all records fit within the origin
-        records.push(soa_record);
-        for _i in 1..record_len {
+        for _ in 1..record_len {
             let record = Record::read(decoder)?;
             if record.rr_type() == RecordType::SOA {
                 return Err("no records after the first may be SOA".into());
@@ -46,9 +50,8 @@ impl Zone {
             records.push(record);
         }
         Ok(Zone {
+            soa_record,
             records,
-            origin,
-            serial,
         })
     }
 }
@@ -56,14 +59,15 @@ impl Zone {
 impl From<Zone> for Authority {
     fn from(zone: Zone) -> Authority {
         let mut records = BTreeMap::new();
-        let serial = zone.serial;
-        for record in zone.records {
+        let serial = zone.serial();
+        let origin = zone.origin().to_lowercase();
+        for record in vec![zone.soa_record].into_iter().chain(zone.records) {
             let entry = records
                 .entry(RrKey::new(LowerName::new(record.name()), record.rr_type()))
                 .or_insert_with(|| RecordSet::new(record.name(), record.rr_type(), serial));
             entry.insert(record, serial);
         }
-        Authority::new(zone.origin, records, ZoneType::Master, false, false)
+        Authority::new(origin, records, ZoneType::Master, false, false)
     }
 }
 
@@ -87,19 +91,9 @@ impl BinEncodable for Zone {
             magic.emit(encoder)?;
         }
         self.version().emit(encoder)?;
-        (self.records.len() as u32).emit(encoder)?;
-        // First emit the SOA record
+        ((self.records.len() + 1) as u32).emit(encoder)?;
+        self.soa_record.emit(encoder)?;
         for record in &self.records {
-            if record.rr_type() == RecordType::SOA {
-                record.emit(encoder)?;
-                break;
-            }
-        }
-        // Now emit all further records
-        for record in &self.records {
-            if record.rr_type() == RecordType::SOA {
-                continue;
-            }
             record.emit(encoder)?;
         }
         Ok(())
@@ -147,9 +141,8 @@ mod tests {
     #[test]
     fn test_one_record() {
         let zone = Zone {
-            records: vec![soa()],
-            origin: Name::from_str("example.invalid.").unwrap(),
-            serial: 1517625548,
+            soa_record: soa(),
+            records: vec![],
         };
         assert_eq!(zone, Zone::from_bytes(&zone.to_bytes().unwrap()).unwrap());
     }
@@ -157,11 +150,10 @@ mod tests {
     #[test]
     fn test_too_many_records() {
         let mut zone = Zone {
-            records: vec![soa()],
-            origin: Name::from_str("example.invalid.").unwrap(),
-            serial: 1517625548,
+            soa_record: soa(),
+            records: vec![],
         };
-        for _i in 0..1000 {
+        for _ in 0..1 {
             zone.records.push(a());
         }
         assert_eq!(zone, Zone::from_bytes(&zone.to_bytes().unwrap()).unwrap());
