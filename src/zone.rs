@@ -1,7 +1,11 @@
+#[cfg(feature = "pepbutd")]
 use std::collections::BTreeMap;
-use trust_dns::rr::{LowerName, Name, RData, Record, RecordSet, RecordType, RrKey};
+use trust_dns::rr::{Name, RData, Record, RecordType};
+#[cfg(feature = "pepbutd")]
+use trust_dns::rr::{LowerName, RecordSet, RrKey};
+use trust_dns::serialize::binary::{BinDecodable, BinDecoder, BinEncodable, BinEncoder};
 use trust_dns_proto::error::ProtoResult;
-use trust_dns_proto::serialize::binary::{BinDecodable, BinDecoder, BinEncodable, BinEncoder};
+#[cfg(feature = "pepbutd")]
 use trust_dns_server::authority::{Authority, ZoneType};
 
 static ZONE_MAGIC: [u16; 3] = [0x4845, 0x434b, 0x4f1a]; // HECKO\x1a
@@ -56,6 +60,7 @@ impl Zone {
     }
 }
 
+#[cfg(feature = "pepbutd")]
 impl From<Zone> for Authority {
     fn from(zone: Zone) -> Authority {
         let mut records = BTreeMap::new();
@@ -110,7 +115,7 @@ mod tests {
     use trust_dns_proto::rr::resource::Record;
     use trust_dns_proto::serialize::binary::{BinDecodable, BinEncodable};
 
-    use zonefile::Zone;
+    use zone::Zone;
 
     fn a() -> Record {
         Record::from_rdata(
