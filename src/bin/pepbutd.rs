@@ -7,17 +7,15 @@ extern crate trust_dns_server;
 use std::collections::HashMap;
 use std::env;
 use std::fs::File;
-use std::io::Read;
 use std::net::UdpSocket;
 use trust_dns::op::{Header, MessageType, OpCode, ResponseCode};
 use trust_dns::rr::LowerName;
 use trust_dns::rr::dnssec::SupportedAlgorithms;
-use trust_dns::serialize::binary::{BinDecodable, BinDecoder};
 use trust_dns_server::authority::{AuthLookup, Authority, MessageRequest, MessageResponse};
 use trust_dns_server::server::{Request, RequestHandler, ResponseHandler};
 use trust_dns_server::ServerFuture;
 
-use pepbut::Zone;
+use pepbut::{TrustDnsConversionError, Zone};
 
 lazy_static! {
     static ref DNSSEC_ALGOS: SupportedAlgorithms = SupportedAlgorithms::new();
@@ -34,9 +32,10 @@ impl Handler {
         }
     }
 
-    fn upsert(&mut self, zone: Zone) {
+    fn upsert(&mut self, zone: Zone) -> Result<(), TrustDnsConversionError> {
         self.authorities
-            .insert(LowerName::new(zone.origin()), zone.into());
+            .insert(zone.origin.to_lower_name(None)?, zone.into_authority()?);
+        Ok(())
     }
 
     fn find_auth_recurse<'a>(&'a self, name: &LowerName) -> Option<&'a Authority> {
@@ -61,11 +60,7 @@ impl Handler {
 
                 let lookup = authority.search(query, false, *DNSSEC_ALGOS);
                 match lookup {
-                    AuthLookup::Records(_) => {
-                        if let AuthLookup::Records(ns) = authority.ns(false, *DNSSEC_ALGOS) {
-                            response.name_servers(ns);
-                        }
-                    }
+                    AuthLookup::Records(_) => {}
                     AuthLookup::NoName | AuthLookup::NameExists => {
                         if let AuthLookup::Records(soa) = authority.soa_secure(false, *DNSSEC_ALGOS)
                         {
@@ -121,9 +116,9 @@ impl RequestHandler for Handler {
 fn main() {
     let mut handler = Handler::new();
     for zonefile in env::args().skip(1) {
-        let mut buf = vec![];
-        File::open(zonefile).unwrap().read_to_end(&mut buf).unwrap();
-        handler.upsert(Zone::read(&mut BinDecoder::new(&buf)).unwrap());
+        handler
+            .upsert(Zone::read_from(&mut File::open(zonefile).unwrap()).unwrap())
+            .unwrap();
     }
     let mut server = ServerFuture::new(handler).unwrap();
     server.register_socket(UdpSocket::bind("127.0.0.1:5335").unwrap());

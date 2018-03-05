@@ -8,14 +8,16 @@ license = "MIT/Apache-2.0"
 lto = true
 
 [features]
-pepbutd = ["lazy_static", "trust-dns-server"]
+nightly = []
+pepbutd = ["lazy_static", "trust-dns", "trust-dns-server"]
 
 [[bin]]
 name = "pepbutd"
 required-features = ["pepbutd"]
 
 [dependencies]
+failure = "0.1"
 lazy_static = { optional = true, version = "1.0" }
-trust-dns = { git = "https://github.com/bluejekyll/trust-dns", default-features = false }
-trust-dns-proto = { git = "https://github.com/bluejekyll/trust-dns", default-features = false }
+rmpv = "0.4"
+trust-dns = { optional = true, git = "https://github.com/bluejekyll/trust-dns", default-features = false }
 trust-dns-server = { optional = true, git = "https://github.com/bluejekyll/trust-dns", default-features = false }
