@@ -1,8 +1,8 @@
 use rmpv;
 use std::fmt;
 use std::ops::Deref;
-use std::rc::Rc;
-use std::str::FromStr;
+use std::str::{self, FromStr};
+use trust_dns::rr::Label;
 #[cfg(feature = "pepbutd")]
 use trust_dns::rr;
 
@@ -10,13 +10,13 @@ use zone::{Msgpack, MsgpackError};
 
 #[derive(Debug, Fail)]
 pub enum ParseNameError {
-    #[fail(display = "empty label in name {:?}", _0)]
-    EmptyLabel(String),
+    #[fail(display = "label contains invalid characters")]
+    InvalidLabel,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Name {
-    labels: Vec<Rc<String>>,
+    labels: Vec<Label>,
     is_fqdn: bool,
 }
 
@@ -54,13 +54,7 @@ impl FromStr for Name {
 
         Ok(Name {
             labels: s.split('.')
-                .map(|l| {
-                    if l.is_empty() {
-                        Err(ParseNameError::EmptyLabel(s.to_owned()))
-                    } else {
-                        Ok(Rc::new(l.to_owned()))
-                    }
-                })
+                .map(|l| Label::from_utf8(l).map_err(|_| ParseNameError::InvalidLabel))
                 .collect::<Result<Vec<_>, _>>()?,
             is_fqdn,
         })
@@ -68,7 +62,7 @@ impl FromStr for Name {
 }
 
 impl Msgpack for Name {
-    fn from_msgpack(value: &rmpv::Value, labels: &[String]) -> Result<Self, MsgpackError> {
+    fn from_msgpack(value: &rmpv::Value, labels: &[Label]) -> Result<Self, MsgpackError> {
         let name_labels = value
             .as_array()
             .ok_or(MsgpackError::NotArray)?
@@ -83,21 +77,18 @@ impl Msgpack for Name {
         };
 
         Ok(Name {
-            labels: name_labels
-                .iter()
-                .map(|l| Rc::new(labels[*l - 1].clone()))
-                .collect(),
+            labels: name_labels.iter().map(|l| labels[*l - 1].clone()).collect(),
             is_fqdn,
         })
     }
 
-    fn to_msgpack(&self, labels: &mut Vec<String>) -> rmpv::Value {
+    fn to_msgpack(&self, labels: &mut Vec<Label>) -> rmpv::Value {
         let mut labels: Vec<rmpv::Value> = self.labels
             .iter()
             .map(|l| match labels.iter().position(|x| x == l.deref()) {
                 Some(n) => (n + 1).into(),
                 None => {
-                    labels.push((**l).clone());
+                    labels.push(l.clone());
                     labels.len().into()
                 }
             })
@@ -142,8 +133,8 @@ impl Name {
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
     use std::str::FromStr;
+    use trust_dns::rr::Label;
 
     use name::Name;
 
@@ -156,24 +147,30 @@ mod tests {
 
     #[test]
     fn from_str() {
+        macro_rules! label {
+            ($e:expr) => {
+                Label::from_utf8($e).unwrap()
+            };
+        }
+
         assert_eq!(
             Name::from_str("buttslol.net.").unwrap(),
             Name {
-                labels: vec![Rc::new("buttslol".to_owned()), Rc::new("net".to_owned())],
+                labels: vec![label!("buttslol"), label!("net")],
                 is_fqdn: true,
             }
         );
         assert_eq!(
             Name::from_str("subdomain").unwrap(),
             Name {
-                labels: vec![Rc::new("subdomain".to_owned())],
+                labels: vec![label!("subdomain")],
                 is_fqdn: false,
             }
         );
         assert_eq!(
             Name::from_str("☃.net.").unwrap(),
             Name {
-                labels: vec![Rc::new("☃".to_owned()), Rc::new("net".to_owned())],
+                labels: vec![label!("☃"), label!("net")],
                 is_fqdn: true,
             }
         );

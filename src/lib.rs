@@ -5,7 +5,6 @@ extern crate failure;
 extern crate rmpv;
 #[cfg(feature = "nightly")]
 extern crate test;
-#[cfg(feature = "pepbutd")]
 extern crate trust_dns;
 #[cfg(feature = "pepbutd")]
 extern crate trust_dns_server;

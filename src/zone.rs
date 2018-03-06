@@ -1,6 +1,7 @@
 use failure;
 use rmpv;
 use std::io::{Read, Write};
+use trust_dns::rr::Label;
 
 use name::Name;
 use record::Record;
@@ -9,6 +10,8 @@ use record::Record;
 pub enum MsgpackError {
     #[fail(display = "invalid record type {}", _0)]
     InvalidRecordType(u64),
+    #[fail(display = "malformed record label")]
+    MalformedLabel,
     #[fail(display = "expected array")]
     NotArray,
     #[fail(display = "expected binary")]
@@ -28,8 +31,8 @@ pub enum MsgpackError {
 }
 
 pub trait Msgpack: Sized {
-    fn from_msgpack(value: &rmpv::Value, labels: &[String]) -> Result<Self, MsgpackError>;
-    fn to_msgpack(&self, labels: &mut Vec<String>) -> rmpv::Value;
+    fn from_msgpack(value: &rmpv::Value, labels: &[Label]) -> Result<Self, MsgpackError>;
+    fn to_msgpack(&self, labels: &mut Vec<Label>) -> rmpv::Value;
 }
 
 #[derive(Debug)]
@@ -59,10 +62,10 @@ impl Zone {
             .iter()
             .map(|v| {
                 v.as_str()
-                    .map(|s| s.to_owned())
                     .ok_or(MsgpackError::NotString)
+                    .and_then(|s| Label::from_ascii(s).map_err(|_| MsgpackError::MalformedLabel))
             })
-            .collect::<Result<Vec<String>, _>>()?;
+            .collect::<Result<Vec<Label>, _>>()?;
 
         Ok(Zone {
             origin: Name::from_msgpack(value.get(1).ok_or(MsgpackError::WrongRecord)?, &labels)?,
@@ -98,7 +101,7 @@ impl Zone {
             &rmpv::Value::Array(vec![
                 labels
                     .into_iter()
-                    .map(rmpv::Value::from)
+                    .map(|l| rmpv::Value::from(l.to_ascii()))
                     .collect::<Vec<_>>()
                     .into(),
                 origin,

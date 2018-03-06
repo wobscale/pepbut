@@ -1,5 +1,6 @@
 use rmpv;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use trust_dns::rr::Label;
 
 use name::Name;
 use zone::{Msgpack, MsgpackError};
@@ -13,7 +14,7 @@ pub struct Record {
 }
 
 impl Msgpack for Record {
-    fn from_msgpack(value: &rmpv::Value, labels: &[String]) -> Result<Self, MsgpackError> {
+    fn from_msgpack(value: &rmpv::Value, labels: &[Label]) -> Result<Self, MsgpackError> {
         let value = value.as_array().ok_or(MsgpackError::NotArray)?;
         if value.len() != 3 {
             return Err(MsgpackError::WrongRecord);
@@ -30,7 +31,7 @@ impl Msgpack for Record {
         })
     }
 
-    fn to_msgpack(&self, labels: &mut Vec<String>) -> rmpv::Value {
+    fn to_msgpack(&self, labels: &mut Vec<Label>) -> rmpv::Value {
         rmpv::Value::Array(vec![
             self.name.to_msgpack(labels),
             self.ttl.into(),
@@ -94,7 +95,7 @@ impl RData {
 }
 
 impl Msgpack for RData {
-    fn from_msgpack(value: &rmpv::Value, labels: &[String]) -> Result<Self, MsgpackError> {
+    fn from_msgpack(value: &rmpv::Value, labels: &[Label]) -> Result<Self, MsgpackError> {
         let value = value.as_array().ok_or(MsgpackError::NotArray)?;
         let record_type = value
             .get(0)
@@ -197,7 +198,7 @@ impl Msgpack for RData {
         })
     }
 
-    fn to_msgpack(&self, labels: &mut Vec<String>) -> rmpv::Value {
+    fn to_msgpack(&self, labels: &mut Vec<Label>) -> rmpv::Value {
         let mut vec: Vec<rmpv::Value> = Vec::with_capacity(match *self {
             RData::A { .. }
             | RData::AAAA { .. }
