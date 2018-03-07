@@ -2,7 +2,7 @@
 
 #[macro_use]
 extern crate failure;
-extern crate rmpv;
+extern crate rmp;
 #[cfg(feature = "nightly")]
 extern crate test;
 extern crate trust_dns;
@@ -14,5 +14,4 @@ pub mod record;
 pub mod zone;
 
 #[cfg(feature = "pepbutd")]
-pub use name::TrustDnsConversionError;
 pub use zone::Zone;

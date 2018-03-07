@@ -1,12 +1,13 @@
-use rmpv;
+use failure;
+use rmp;
 use std::fmt;
-use std::ops::Deref;
+use std::io::{Read, Write};
 use std::str::{self, FromStr};
 use trust_dns::rr::Label;
 #[cfg(feature = "pepbutd")]
 use trust_dns::rr;
 
-use zone::{Msgpack, MsgpackError};
+use zone::Msgpack;
 
 #[derive(Debug, Fail)]
 pub enum ParseNameError {
@@ -62,13 +63,15 @@ impl FromStr for Name {
 }
 
 impl Msgpack for Name {
-    fn from_msgpack(value: &rmpv::Value, labels: &[Label]) -> Result<Self, MsgpackError> {
-        let name_labels = value
-            .as_array()
-            .ok_or(MsgpackError::NotArray)?
-            .iter()
-            .map(|n| n.as_u64().ok_or(MsgpackError::NotUint).map(|x| x as usize))
-            .collect::<Result<Vec<usize>, _>>()?;
+    fn from_msgpack<R>(reader: &mut R, labels: &[Label]) -> Result<Self, failure::Error>
+    where
+        R: Read,
+    {
+        let label_len = rmp::decode::read_array_len(reader)? as usize;
+        let mut name_labels = Vec::with_capacity(label_len);
+        for _ in 0..label_len {
+            name_labels.push(rmp::decode::read_int(reader)?);
+        }
 
         let (name_labels, is_fqdn) = if name_labels.ends_with(&[0]) {
             (&name_labels[0..(name_labels.len() - 1)], true)
@@ -82,51 +85,51 @@ impl Msgpack for Name {
         })
     }
 
-    fn to_msgpack(&self, labels: &mut Vec<Label>) -> rmpv::Value {
-        let mut labels: Vec<rmpv::Value> = self.labels
-            .iter()
-            .map(|l| match labels.iter().position(|x| x == l.deref()) {
-                Some(n) => (n + 1).into(),
-                None => {
-                    labels.push(l.clone());
-                    labels.len().into()
-                }
-            })
-            .collect();
-        if self.is_fqdn {
-            labels.push(0.into());
-        }
-        rmpv::Value::Array(labels)
-    }
-}
+    fn to_msgpack<W>(&self, writer: &mut W, labels: &mut Vec<Label>) -> Result<(), failure::Error>
+    where
+        W: Write,
+    {
+        rmp::encode::write_array_len(
+            writer,
+            if self.is_fqdn {
+                self.labels.len() + 1
+            } else {
+                self.labels.len()
+            } as u32,
+        )?;
 
-#[cfg(feature = "pepbutd")]
-#[derive(Debug, Fail)]
-pub enum TrustDnsConversionError {
-    #[fail(display = "trust-dns-proto name creation error")]
-    NameCreation,
-    #[fail(display = "name is not FQDN and origin was not provided")]
-    NoOrigin,
+        for label in &self.labels {
+            rmp::encode::write_uint(
+                writer,
+                match labels.iter().position(|x| x == label) {
+                    Some(n) => n + 1,
+                    None => {
+                        labels.push(label.clone());
+                        labels.len()
+                    }
+                } as u64,
+            )?;
+        }
+
+        if self.is_fqdn {
+            rmp::encode::write_uint(writer, 0)?;
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(feature = "pepbutd")]
 impl Name {
-    pub fn to_name(&self, origin: Option<&Name>) -> Result<rr::Name, TrustDnsConversionError> {
-        let labels = self.labels
-            .iter()
-            .chain(match (self.is_fqdn, origin) {
-                (true, _) => [].iter(),
-                (false, Some(n)) => n.labels.iter(),
-                (false, None) => return Err(TrustDnsConversionError::NoOrigin),
-            })
-            .map(|x| x.deref().to_owned());
-        Ok(rr::Name::from_labels(labels).map_err(|_| TrustDnsConversionError::NameCreation)?)
+    pub fn to_name(&self, origin: Option<&Name>) -> Result<rr::Name, failure::Error> {
+        rr::Name::from_labels(self.labels.iter().chain(match (self.is_fqdn, origin) {
+            (true, _) => [].iter(),
+            (false, Some(n)) => n.labels.iter(),
+            (false, None) => bail!("no origin given on non-FQDN name"),
+        })).map_err(|e| format_err!("{:?}", e))
     }
 
-    pub fn to_lower_name(
-        &self,
-        origin: Option<&Name>,
-    ) -> Result<rr::LowerName, TrustDnsConversionError> {
+    pub fn to_lower_name(&self, origin: Option<&Name>) -> Result<rr::LowerName, failure::Error> {
         self.to_name(origin).map(|x| x.into())
     }
 }
@@ -148,7 +151,7 @@ mod tests {
     #[test]
     fn from_str() {
         macro_rules! label {
-            ($e:expr) => {
+            ($e: expr) => {
                 Label::from_utf8($e).unwrap()
             };
         }

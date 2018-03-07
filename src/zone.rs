@@ -1,38 +1,19 @@
 use failure;
-use rmpv;
-use std::io::{Read, Write};
+use rmp;
+use rmp::Marker;
+use std::io::{Read, Seek, SeekFrom, Write};
 use trust_dns::rr::Label;
 
 use name::Name;
 use record::Record;
 
-#[derive(Fail, Debug)]
-pub enum MsgpackError {
-    #[fail(display = "invalid record type {}", _0)]
-    InvalidRecordType(u64),
-    #[fail(display = "malformed record label")]
-    MalformedLabel,
-    #[fail(display = "expected array")]
-    NotArray,
-    #[fail(display = "expected binary")]
-    NotBinary,
-    #[fail(display = "expected string")]
-    NotString,
-    #[fail(display = "expected unsigned integer")]
-    NotUint,
-    #[fail(display = "wrong IP address length")]
-    WrongAddressLength,
-    #[fail(display = "wrong record data")]
-    WrongRecord,
-    #[fail(display = "wrong rdata data")]
-    WrongRData,
-    #[fail(display = "wrong zone data")]
-    WrongZone,
-}
-
 pub trait Msgpack: Sized {
-    fn from_msgpack(value: &rmpv::Value, labels: &[Label]) -> Result<Self, MsgpackError>;
-    fn to_msgpack(&self, labels: &mut Vec<Label>) -> rmpv::Value;
+    fn from_msgpack<R>(reader: &mut R, labels: &[Label]) -> Result<Self, failure::Error>
+    where
+        R: Read;
+    fn to_msgpack<W>(&self, &mut W, labels: &mut Vec<Label>) -> Result<(), failure::Error>
+    where
+        W: Write;
 }
 
 #[derive(Debug)]
@@ -46,69 +27,85 @@ pub struct Zone {
 impl Zone {
     pub fn read_from<R>(reader: &mut R) -> Result<Zone, failure::Error>
     where
-        R: Read,
+        R: Read + Seek,
     {
-        let value = rmpv::decode::read_value(reader)?;
-        let value = value.as_array().ok_or(MsgpackError::NotArray)?;
-        if value.len() != 4 {
-            return Err(MsgpackError::WrongZone.into());
+        if rmp::decode::read_array_len(reader)? != 5 {
+            bail!("zone must be array of 5 elements");
         }
 
-        let labels = value
-            .get(0)
-            .ok_or(MsgpackError::WrongRecord)?
-            .as_array()
-            .ok_or(MsgpackError::WrongRecord)?
-            .iter()
-            .map(|v| {
-                v.as_str()
-                    .ok_or(MsgpackError::NotString)
-                    .and_then(|s| Label::from_ascii(s).map_err(|_| MsgpackError::MalformedLabel))
-            })
-            .collect::<Result<Vec<Label>, _>>()?;
+        reader.seek(SeekFrom::End(-9))?;
+        let label_offset = rmp::decode::read_u64(reader)?;
+
+        reader.seek(SeekFrom::End(-(label_offset as i64)))?;
+        let label_len = rmp::decode::read_array_len(reader)? as usize;
+        let mut labels = Vec::with_capacity(label_len);
+        for _ in 0..label_len {
+            let len = rmp::decode::read_str_len(reader)? as usize;
+            let mut buf = Vec::with_capacity(len);
+            buf.resize(len, 0);
+            reader.read_exact(&mut buf[..])?;
+            labels.push(match Label::from_raw_bytes(&buf[..]) {
+                Ok(label) => label,
+                Err(err) => bail!("{:?}", err),
+            });
+        }
+
+        reader.seek(SeekFrom::Start(1))?;
+        let origin = Name::from_msgpack(reader, &labels)?;
+
+        let serial = rmp::decode::read_int(reader)?;
+
+        let record_len = rmp::decode::read_array_len(reader)?;
+        let mut records = Vec::with_capacity(record_len as usize);
+        for _ in 0..record_len {
+            records.push(Record::from_msgpack(reader, &labels)?);
+        }
 
         Ok(Zone {
-            origin: Name::from_msgpack(value.get(1).ok_or(MsgpackError::WrongRecord)?, &labels)?,
-            serial: value
-                .get(2)
-                .ok_or(MsgpackError::WrongRecord)?
-                .as_u64()
-                .ok_or(MsgpackError::NotUint)? as u32,
-            records: value
-                .get(3)
-                .ok_or(MsgpackError::WrongZone)?
-                .as_array()
-                .ok_or(MsgpackError::WrongZone)?
-                .iter()
-                .map(|r| Record::from_msgpack(r, &labels))
-                .collect::<Result<Vec<_>, _>>()?,
+            origin,
+            serial,
+            records,
         })
     }
 
-    pub fn write_to<W>(self, writer: &mut W) -> Result<(), failure::Error>
+    pub fn write_to<W>(&self, writer: &mut W) -> Result<(), failure::Error>
     where
         W: Write,
     {
+        rmp::encode::write_array_len(writer, 5)?;
         let mut labels = Vec::new();
-        let origin = self.origin.to_msgpack(&mut labels);
-        let records: Vec<_> = self.records
-            .iter()
-            .map(|r| r.to_msgpack(&mut labels))
-            .collect();
 
-        rmpv::encode::write_value(
-            writer,
-            &rmpv::Value::Array(vec![
-                labels
-                    .into_iter()
-                    .map(|l| rmpv::Value::from(l.to_ascii()))
-                    .collect::<Vec<_>>()
-                    .into(),
-                origin,
-                self.serial.into(),
-                records.into(),
-            ]),
-        )?;
+        self.origin.to_msgpack(writer, &mut labels)?;
+
+        rmp::encode::write_uint(writer, self.serial as u64)?;
+
+        rmp::encode::write_array_len(writer, self.records.len() as u32)?;
+        for record in &self.records {
+            record.to_msgpack(writer, &mut labels)?;
+        }
+
+        let mut bytes_written: u64 =
+            match rmp::encode::write_array_len(writer, labels.len() as u32)? {
+                Marker::FixArray(_) => 1,
+                Marker::Array16 => 3,
+                Marker::Array32 => 5,
+                _ => unreachable!(),
+            };
+        for label in labels {
+            let label = label.to_ascii();
+            bytes_written += match rmp::encode::write_str_len(writer, label.len() as u32)? {
+                Marker::FixStr(_) => 1,
+                Marker::Str8 => 2,
+                Marker::Str16 => 3,
+                Marker::Str32 => 5,
+                _ => unreachable!(),
+            };
+            writer.write_all(label.as_bytes())?;
+            bytes_written += label.len() as u64;
+        }
+
+        rmp::encode::write_u64(writer, bytes_written + 9)?;
+
         Ok(())
     }
 }
@@ -117,7 +114,7 @@ impl Zone {
 impl Zone {
     pub fn into_authority(
         self,
-    ) -> Result<::trust_dns_server::authority::Authority, ::name::TrustDnsConversionError> {
+    ) -> Result<::trust_dns_server::authority::Authority, failure::Error> {
         use std::collections::BTreeMap;
         use std::str::FromStr;
         use trust_dns::rr::{self, IntoRecordSet};
@@ -167,6 +164,7 @@ impl Zone {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
     use std::str::FromStr;
     #[cfg(feature = "nightly")]
     use test::Bencher;
@@ -276,8 +274,8 @@ mod tests {
     #[bench]
     fn bench_read_example_invalid(b: &mut Bencher) {
         b.iter(|| {
-            let mut buf: &[u8] = include_bytes!("../tests/data/example.invalid.zone");
-            Zone::read_from(&mut buf).unwrap();
+            let buf: &[u8] = include_bytes!("../tests/data/example.invalid.zone");
+            Zone::read_from(&mut Cursor::new(buf)).unwrap();
         })
     }
 
@@ -295,7 +293,10 @@ mod tests {
         let zone = zone_example_invalid!();
         let mut buf = Vec::new();
         zone.clone().write_to(&mut buf).unwrap();
-        assert_eq!(zone, Zone::read_from(&mut buf.as_slice()).unwrap());
+        assert_eq!(
+            zone,
+            Zone::read_from(&mut Cursor::new(buf.as_slice())).unwrap()
+        );
         assert_eq!(
             buf,
             &include_bytes!("../tests/data/example.invalid.zone")[..]

@@ -18,6 +18,6 @@ required-features = ["pepbutd"]
 [dependencies]
 failure = "0.1"
 lazy_static = { optional = true, version = "1.0" }
-rmpv = "0.4"
+rmp = "0.8"
 trust-dns = { git = "https://github.com/bluejekyll/trust-dns", default-features = false }
 trust-dns-server = { optional = true, git = "https://github.com/bluejekyll/trust-dns", default-features = false }

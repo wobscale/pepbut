@@ -1,3 +1,4 @@
+extern crate failure;
 #[macro_use]
 extern crate lazy_static;
 extern crate pepbut;
@@ -15,7 +16,7 @@ use trust_dns_server::authority::{AuthLookup, Authority, MessageRequest, Message
 use trust_dns_server::server::{Request, RequestHandler, ResponseHandler};
 use trust_dns_server::ServerFuture;
 
-use pepbut::{TrustDnsConversionError, Zone};
+use pepbut::Zone;
 
 lazy_static! {
     static ref DNSSEC_ALGOS: SupportedAlgorithms = SupportedAlgorithms::new();
@@ -32,7 +33,7 @@ impl Handler {
         }
     }
 
-    fn upsert(&mut self, zone: Zone) -> Result<(), TrustDnsConversionError> {
+    fn upsert(&mut self, zone: Zone) -> Result<(), failure::Error> {
         self.authorities
             .insert(zone.origin.to_lower_name(None)?, zone.into_authority()?);
         Ok(())
