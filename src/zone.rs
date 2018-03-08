@@ -115,6 +115,11 @@ impl Zone {
     pub fn into_authority(
         self,
     ) -> Result<::trust_dns_server::authority::Authority, failure::Error> {
+        lazy_static! {
+            static ref MNAME: rr::Name = rr::Name::from_str("ns1.wob.zone.").unwrap();
+            static ref RNAME: rr::Name = rr::Name::from_str("admin.wobscale.website.").unwrap();
+        }
+
         use std::collections::BTreeMap;
         use std::str::FromStr;
         use trust_dns::rr::{self, IntoRecordSet};
@@ -132,8 +137,8 @@ impl Zone {
                 3600,
                 rr::RecordType::SOA,
                 rr::RData::SOA(rr::rdata::SOA::new(
-                    rr::Name::from_str("ns1.wob.zone.").unwrap(),
-                    rr::Name::from_str("admin.wobscale.website.").unwrap(),
+                    MNAME.clone(),
+                    RNAME.clone(),
                     serial,
                     10_000,
                     2_400,
@@ -250,51 +255,57 @@ mod tests {
         };
     }
 
-    macro_rules! zone_example_invalid {
-        () => {
-            Zone {
-                origin: Name::from_str("example.invalid.").unwrap(),
-                serial: 1234567890,
-                records: vec![
-                    ns!("", "ns1"),
-                    ns!("", "ns2"),
-                    a!("www"),
-                    aaaa!("www"),
-                    cname!("☃", "d1234567890.cloudfront.invalid."),
-                    mx!("", 10, "mx1.mail.invalid."),
-                    mx!("", 20, "mx2.mail.invalid."),
-                    srv!("_sip._tcp", 0, 5, 5060, "sip"),
-                    txt!("", vec!["v=spf1 -all".to_owned()]),
-                ],
-            }
+    lazy_static! {
+        static ref ZONE_EXAMPLE_INVALID: Zone = Zone {
+            origin: Name::from_str("example.invalid.").unwrap(),
+            serial: 1234567890,
+            records: vec![
+                ns!("", "ns1"),
+                ns!("", "ns2"),
+                a!("www"),
+                aaaa!("www"),
+                cname!("☃", "d1234567890.cloudfront.invalid."),
+                mx!("", 10, "mx1.mail.invalid."),
+                mx!("", 20, "mx2.mail.invalid."),
+                srv!("_sip._tcp", 0, 5, 5060, "sip"),
+                txt!("", vec!["v=spf1 -all".to_owned()]),
+            ],
         };
     }
 
     #[cfg(feature = "nightly")]
     #[bench]
+    fn bench_zone_clone(b: &mut Bencher) {
+        ZONE_EXAMPLE_INVALID.clone();
+        b.iter(|| ZONE_EXAMPLE_INVALID.clone());
+    }
+
+    #[cfg(feature = "nightly")]
+    #[bench]
     fn bench_read_example_invalid(b: &mut Bencher) {
+        ZONE_EXAMPLE_INVALID.clone();
         b.iter(|| {
             let buf: &[u8] = include_bytes!("../tests/data/example.invalid.zone");
             Zone::read_from(&mut Cursor::new(buf)).unwrap();
-        })
+        });
     }
 
     #[cfg(feature = "nightly")]
     #[bench]
     fn bench_write_example_invalid(b: &mut Bencher) {
+        ZONE_EXAMPLE_INVALID.clone();
         b.iter(|| {
             let mut buf = Vec::new();
-            zone_example_invalid!().write_to(&mut buf).unwrap();
-        })
+            ZONE_EXAMPLE_INVALID.write_to(&mut buf).unwrap();
+        });
     }
 
     #[test]
     fn read_write_example_invalid() {
-        let zone = zone_example_invalid!();
         let mut buf = Vec::new();
-        zone.clone().write_to(&mut buf).unwrap();
+        ZONE_EXAMPLE_INVALID.write_to(&mut buf).unwrap();
         assert_eq!(
-            zone,
+            *ZONE_EXAMPLE_INVALID,
             Zone::read_from(&mut Cursor::new(buf.as_slice())).unwrap()
         );
         assert_eq!(
@@ -306,7 +317,8 @@ mod tests {
     #[cfg(all(feature = "pepbutd", feature = "nightly"))]
     #[bench]
     fn bench_into_authority(b: &mut Bencher) {
-        b.iter(|| zone_example_invalid!().into_authority().unwrap());
+        ZONE_EXAMPLE_INVALID.clone();
+        b.iter(|| ZONE_EXAMPLE_INVALID.clone().into_authority().unwrap());
     }
 
     #[test]

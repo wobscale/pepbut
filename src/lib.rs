@@ -2,6 +2,9 @@
 
 #[macro_use]
 extern crate failure;
+#[cfg(any(test, feature = "pepbutd"))]
+#[macro_use]
+extern crate lazy_static;
 extern crate rmp;
 #[cfg(feature = "nightly")]
 extern crate test;
