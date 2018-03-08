@@ -77,7 +77,7 @@ impl Zone {
 
         self.origin.to_msgpack(writer, &mut labels)?;
 
-        rmp::encode::write_uint(writer, self.serial as u64)?;
+        rmp::encode::write_uint(writer, self.serial.into())?;
 
         rmp::encode::write_array_len(writer, self.records.len() as u32)?;
         for record in &self.records {

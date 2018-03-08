@@ -40,7 +40,7 @@ impl Msgpack for Record {
         rmp::encode::write_array_len(writer, 4)?;
 
         self.name.to_msgpack(writer, labels)?;
-        rmp::encode::write_uint(writer, self.ttl as u64)?;
+        rmp::encode::write_uint(writer, self.ttl.into())?;
         self.rdata.to_msgpack(writer, labels)?;
 
         Ok(())
@@ -197,7 +197,7 @@ impl Msgpack for RData {
     where
         W: Write,
     {
-        rmp::encode::write_uint(writer, self.record_type() as u64)?;
+        rmp::encode::write_uint(writer, self.record_type().into())?;
 
         match *self {
             RData::A(addr) | RData::PTR(IpAddr::V4(addr)) => {
@@ -214,7 +214,7 @@ impl Msgpack for RData {
                 ref exchange,
             } => {
                 rmp::encode::write_array_len(writer, 2)?;
-                rmp::encode::write_uint(writer, preference as u64)?;
+                rmp::encode::write_uint(writer, preference.into())?;
                 exchange.to_msgpack(writer, labels)?;
             }
             RData::SRV {
@@ -224,9 +224,9 @@ impl Msgpack for RData {
                 ref target,
             } => {
                 rmp::encode::write_array_len(writer, 4)?;
-                rmp::encode::write_uint(writer, priority as u64)?;
-                rmp::encode::write_uint(writer, weight as u64)?;
-                rmp::encode::write_uint(writer, port as u64)?;
+                rmp::encode::write_uint(writer, priority.into())?;
+                rmp::encode::write_uint(writer, weight.into())?;
+                rmp::encode::write_uint(writer, port.into())?;
                 target.to_msgpack(writer, labels)?;
             }
             RData::TXT(ref data) => {
