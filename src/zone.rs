@@ -260,7 +260,7 @@ mod tests {
                     ns!("", "ns2"),
                     a!("www"),
                     aaaa!("www"),
-                    cname!("cdn", "d1234567890.cloudfront.invalid."),
+                    cname!("☃", "d1234567890.cloudfront.invalid."),
                     mx!("", 10, "mx1.mail.invalid."),
                     mx!("", 20, "mx2.mail.invalid."),
                     srv!("_sip._tcp", 0, 5, 5060, "sip"),
