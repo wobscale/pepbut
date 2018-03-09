@@ -55,7 +55,11 @@ impl FromStr for Name {
 
         Ok(Name {
             labels: s.split('.')
-                .map(|l| Label::from_utf8(l).map_err(|_| ParseNameError::InvalidLabel))
+                .map(|l| {
+                    Label::from_utf8(l)
+                        .map(|l| l.to_lowercase())
+                        .map_err(|_| ParseNameError::InvalidLabel)
+                })
                 .collect::<Result<Vec<_>, _>>()?,
             is_fqdn,
         })
