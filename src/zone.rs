@@ -1,8 +1,7 @@
 //! Serialization and deserialization of zone files.
 
 use failure;
-use rmp::Marker;
-use rmp;
+use rmp::{self, Marker};
 use std::io::{Read, Seek, SeekFrom, Write};
 
 use Msgpack;

@@ -9,8 +9,8 @@ use idna::uts46;
 use rmp;
 use std::fmt;
 use std::io::{Read, Write};
-use std::sync::Arc;
 use std::str::{self, FromStr};
+use std::sync::Arc;
 
 use Msgpack;
 
