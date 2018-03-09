@@ -1,30 +1,32 @@
-use failure;
-use rmp;
-use rmp::Marker;
-use std::io::{Read, Seek, SeekFrom, Write};
-use trust_dns::rr::Label;
+//! Serialization and deserialization of zone files.
 
-use name::Name;
+use failure;
+use rmp::Marker;
+use rmp;
+use std::io::{Read, Seek, SeekFrom, Write};
+
+use Msgpack;
+use name::{Label, Name, FQDN};
 use record::Record;
 
-pub trait Msgpack: Sized {
-    fn from_msgpack<R>(reader: &mut R, labels: &[Label]) -> Result<Self, failure::Error>
-    where
-        R: Read;
-    fn to_msgpack<W>(&self, &mut W, labels: &mut Vec<Label>) -> Result<(), failure::Error>
-    where
-        W: Write;
-}
-
+/// A zone is a collection of records belonging to an origin.
 #[derive(Debug)]
 #[cfg_attr(test, derive(Clone, PartialEq))]
 pub struct Zone {
-    pub origin: Name,
+    /// The origin of the zone. All records in the zone must be under the origin.
+    pub origin: FQDN,
+    /// The serial. This should generally always increase with zone updates, but pepbut does not
+    /// implement zone transfers so the point is rather moot.
     pub serial: u32,
-    pub records: Vec<Record>,
+    /// The collection of records in the zone.
+    records: Vec<Record>,
 }
 
 impl Zone {
+    /// Deserializes a zone file from a reader.
+    ///
+    /// The reader is required to implement `Seek` due to the need to read the labels at the end of
+    /// the zone file first before processing the rest of the zone.
     pub fn read_from<R>(reader: &mut R) -> Result<Zone, failure::Error>
     where
         R: Read + Seek,
@@ -36,22 +38,16 @@ impl Zone {
         reader.seek(SeekFrom::End(-9))?;
         let label_offset = rmp::decode::read_u64(reader)?;
 
+        #[cfg_attr(feature = "cargo-clippy", allow(cast_possible_wrap))]
         reader.seek(SeekFrom::End(-(label_offset as i64)))?;
         let label_len = rmp::decode::read_array_len(reader)? as usize;
         let mut labels = Vec::with_capacity(label_len);
         for _ in 0..label_len {
-            let len = rmp::decode::read_str_len(reader)? as usize;
-            let mut buf = Vec::with_capacity(len);
-            buf.resize(len, 0);
-            reader.read_exact(&mut buf[..])?;
-            labels.push(match Label::from_raw_bytes(&buf[..]) {
-                Ok(label) => label,
-                Err(err) => bail!("{:?}", err),
-            });
+            labels.push(Label::from_msgpack(reader, &[])?);
         }
 
         reader.seek(SeekFrom::Start(1))?;
-        let origin = Name::from_msgpack(reader, &labels)?;
+        let origin = Name::from_msgpack(reader, &labels)?.to_full_name(None)?;
 
         let serial = rmp::decode::read_int(reader)?;
 
@@ -68,6 +64,8 @@ impl Zone {
         })
     }
 
+    /// Serializes a zone file to a writer in one pass.
+    #[cfg_attr(feature = "cargo-clippy", allow(cast_possible_truncation))]
     pub fn write_to<W>(&self, writer: &mut W) -> Result<(), failure::Error>
     where
         W: Write,
@@ -75,7 +73,7 @@ impl Zone {
         rmp::encode::write_array_len(writer, 5)?;
         let mut labels = Vec::new();
 
-        self.origin.to_msgpack(writer, &mut labels)?;
+        self.origin.to_name().to_msgpack(writer, &mut labels)?;
 
         rmp::encode::write_uint(writer, self.serial.into())?;
 
@@ -92,78 +90,13 @@ impl Zone {
                 _ => unreachable!(),
             };
         for label in labels {
-            let label = label.to_ascii();
-            bytes_written += match rmp::encode::write_str_len(writer, label.len() as u32)? {
-                Marker::FixStr(_) => 1,
-                Marker::Str8 => 2,
-                Marker::Str16 => 3,
-                Marker::Str32 => 5,
-                _ => unreachable!(),
-            };
-            writer.write_all(label.as_bytes())?;
-            bytes_written += label.len() as u64;
+            label.to_msgpack(writer, &mut vec![])?;
+            bytes_written += label.len() as u64 + if label.len() < 32 { 1 } else { 2 };
         }
 
         rmp::encode::write_u64(writer, bytes_written + 9)?;
 
         Ok(())
-    }
-}
-
-#[cfg(feature = "pepbutd")]
-impl Zone {
-    pub fn into_authority(
-        self,
-    ) -> Result<::trust_dns_server::authority::Authority, failure::Error> {
-        lazy_static! {
-            static ref MNAME: rr::Name = rr::Name::from_str("ns1.wob.zone.").unwrap();
-            static ref RNAME: rr::Name = rr::Name::from_str("admin.wobscale.website.").unwrap();
-        }
-
-        use std::collections::BTreeMap;
-        use std::str::FromStr;
-        use trust_dns::rr::{self, IntoRecordSet};
-        use trust_dns_server::authority::{Authority, ZoneType};
-
-        let serial = self.serial;
-        let mut records = BTreeMap::new();
-        records.insert(
-            rr::RrKey::new(
-                self.origin.clone().to_lower_name(Some(&self.origin))?,
-                rr::RecordType::SOA,
-            ),
-            rr::Record::from_rdata(
-                self.origin.clone().to_name(Some(&self.origin))?,
-                3600,
-                rr::RecordType::SOA,
-                rr::RData::SOA(rr::rdata::SOA::new(
-                    MNAME.clone(),
-                    RNAME.clone(),
-                    serial,
-                    10_000,
-                    2_400,
-                    604_800,
-                    300,
-                )),
-            ).into_record_set(),
-        );
-        for record in self.records {
-            let record: rr::Record = record.into_record(Some(&self.origin))?;
-            let entry = records
-                .entry(rr::RrKey::new(
-                    rr::LowerName::new(record.name()),
-                    record.rr_type(),
-                ))
-                .or_insert_with(|| rr::RecordSet::new(record.name(), record.rr_type(), serial));
-            entry.insert(record, serial);
-        }
-        Ok(Authority::new(
-            self.origin.clone().to_name(Some(&self.origin))?,
-            records,
-            ZoneType::Master,
-            false,
-            false,
-        ))
     }
 }
 
@@ -257,7 +190,10 @@ mod tests {
 
     lazy_static! {
         static ref ZONE_EXAMPLE_INVALID: Zone = Zone {
-            origin: Name::from_str("example.invalid.").unwrap(),
+            origin: Name::from_str("example.invalid.")
+                .unwrap()
+                .to_full_name(None)
+                .unwrap(),
             serial: 1234567890,
             records: vec![
                 ns!("", "ns1"),
@@ -314,17 +250,13 @@ mod tests {
         );
     }
 
-    #[cfg(all(feature = "pepbutd", feature = "nightly"))]
-    #[bench]
-    fn bench_into_authority(b: &mut Bencher) {
-        ZONE_EXAMPLE_INVALID.clone();
-        b.iter(|| ZONE_EXAMPLE_INVALID.clone().into_authority().unwrap());
-    }
-
     #[test]
     fn too_many_records() {
         let mut zone = Zone {
-            origin: Name::from_str("example.invalid.").unwrap(),
+            origin: Name::from_str("example.invalid.")
+                .unwrap()
+                .to_full_name(None)
+                .unwrap(),
             serial: 1234567890,
             records: Vec::with_capacity(100000),
         };

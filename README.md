@@ -2,9 +2,11 @@
 
 ![pepbut](https://user-images.githubusercontent.com/52814/36644695-048da318-1a13-11e8-9dd2-5869434e62b8.gif)
 
-pepbut is [Wobscale](https://github.com/wobscale)'s authoritative DNS server and record update API / console, written in Rust using [TRust-DNS](https://github.com/bluejekyll/trust-dns).
+pepbut is [Wobscale](https://github.com/wobscale)'s authoritative DNS server and record update API / console, written in Rust.
 
 It is in development and should not be used in production.
+
+Some of the implementation is inspired by [TRust-DNS](https://github.com/bluejekyll/trust-dns).
 
 ## Goals and non-goals
 

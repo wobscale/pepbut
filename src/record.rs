@@ -1,17 +1,22 @@
+//! Records and record data.
+
 use failure;
 use rmp;
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use trust_dns::rr::Label;
 
-use name::Name;
-use zone::Msgpack;
+use Msgpack;
+use name::{Label, Name};
 
+/// A record maps an owner domain name to a record data value, associated with a time-to-live.
 #[derive(Debug)]
 #[cfg_attr(test, derive(Clone, PartialEq))]
 pub struct Record {
+    /// The name for the owner of this record.
     pub name: Name,
+    /// The time-to-live for this record.
     pub ttl: u32,
+    /// The data for this record.
     pub rdata: RData,
 }
 
@@ -47,47 +52,57 @@ impl Msgpack for Record {
     }
 }
 
-#[cfg(feature = "pepbutd")]
-impl Record {
-    pub fn into_record(
-        self,
-        origin: Option<&Name>,
-    ) -> Result<::trust_dns::rr::Record, failure::Error> {
-        use trust_dns::rr;
-
-        let rdata = self.rdata.into_rdata(origin)?;
-        Ok(rr::Record::from_rdata(
-            self.name.to_name(origin)?,
-            self.ttl,
-            rdata.to_record_type(),
-            rdata,
-        ))
-    }
-}
-
+/// The data of a resource record.
 #[derive(Debug)]
 #[cfg_attr(test, derive(Clone, PartialEq))]
 pub enum RData {
+    /// [A record data](https://tools.ietf.org/html/rfc1035#section-3.4.1), representing an IPv4
+    /// address.
     A(Ipv4Addr),
+    /// [AAAA record data](https://tools.ietf.org/html/rfc1886#section-2.2), representing an IPv6
+    /// address.
     AAAA(Ipv6Addr),
+    /// [CNAME record data](https://tools.ietf.org/html/rfc1035#section-3.3.1), representing a
+    /// canonical name for an alias.
     CNAME(Name),
+    /// [MX record data](https://tools.ietf.org/html/rfc1035#section-3.3.9), representing a mail
+    /// server for a domain.
     MX {
+        /// Specifies the preference given to this particular exchange among others with the same
+        /// owner. Lower values are preferred.
         preference: u16,
+        /// The domain name of the mail server.
         exchange: Name,
     },
+    /// [NS record data](https://tools.ietf.org/html/rfc1035#section-3.3.11), representing an
+    /// authoritative name server for a domain.
     NS(Name),
+    /// [PTR record data](https://tools.ietf.org/html/rfc1035#section-3.3.12), commonly used for
+    /// reverse DNS.
+    ///
+    /// In pepbut, PTR records use the `std::net::IpAddr` enum, which are translated into the
+    /// relevant `in-addr.arpa` or `ip6.arpa` `Name`s.
     PTR(IpAddr),
+    /// [SRV record data](https://tools.ietf.org/html/rfc2782), sometimes used to represent a set
+    /// of hosts and ports specifying the location of a service.
     SRV {
+        /// Specifies the priority of this target. Lower value targets must be attempted first.
         priority: u16,
+        /// Specifies the weight for this target. Higher values are preferred.
         weight: u16,
+        /// Specifies the port the service is running on for this target.
         port: u16,
+        /// Specifies the name of the host the service is running on.
         target: Name,
     },
+    /// [TXT record data](https://tools.ietf.org/html/rfc1035#section-3.3.14), used to represent
+    /// descriptive text.
     TXT(Vec<String>),
 }
 
 impl RData {
-    fn record_type(&self) -> u16 {
+    /// The resource record type.
+    pub fn record_type(&self) -> u16 {
         match *self {
             RData::A { .. } => 1,
             RData::AAAA { .. } => 28,
@@ -193,6 +208,7 @@ impl Msgpack for RData {
         })
     }
 
+    #[cfg_attr(feature = "cargo-clippy", allow(cast_possible_truncation))]
     fn to_msgpack<W>(&self, writer: &mut W, labels: &mut Vec<Label>) -> Result<(), failure::Error>
     where
         W: Write,
@@ -239,39 +255,5 @@ impl Msgpack for RData {
         }
 
         Ok(())
-    }
-}
-
-#[cfg(feature = "pepbutd")]
-impl RData {
-    pub fn into_rdata(
-        self,
-        origin: Option<&Name>,
-    ) -> Result<::trust_dns::rr::RData, failure::Error> {
-        use trust_dns::rr;
-
-        Ok(match self {
-            RData::A(a) => rr::RData::A(a),
-            RData::AAAA(a) => rr::RData::AAAA(a),
-            RData::CNAME(n) => rr::RData::CNAME(n.to_name(origin)?),
-            RData::MX {
-                preference,
-                exchange,
-            } => rr::RData::MX(rr::rdata::MX::new(preference, exchange.to_name(origin)?)),
-            RData::NS(n) => rr::RData::NS(n.to_name(origin)?),
-            RData::PTR(a) => rr::RData::PTR(a.into()),
-            RData::SRV {
-                priority,
-                weight,
-                port,
-                target,
-            } => rr::RData::SRV(rr::rdata::SRV::new(
-                priority,
-                weight,
-                port,
-                target.to_name(origin)?,
-            )),
-            RData::TXT(v) => rr::RData::TXT(rr::rdata::TXT::new(v)),
-        })
     }
 }
