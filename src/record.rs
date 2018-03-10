@@ -9,8 +9,7 @@ use Msgpack;
 use name::{Label, Name};
 
 /// A record maps an owner domain name to a record data value, associated with a time-to-live.
-#[derive(Debug)]
-#[cfg_attr(test, derive(Clone, PartialEq))]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Record {
     /// The name for the owner of this record.
     pub name: Name,
@@ -18,6 +17,13 @@ pub struct Record {
     pub ttl: u32,
     /// The data for this record.
     pub rdata: RData,
+}
+
+impl Record {
+    /// The resource record type.
+    pub fn record_type(&self) -> u16 {
+        self.rdata.record_type()
+    }
 }
 
 impl Msgpack for Record {
@@ -53,8 +59,7 @@ impl Msgpack for Record {
 }
 
 /// The data of a resource record.
-#[derive(Debug)]
-#[cfg_attr(test, derive(Clone, PartialEq))]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RData {
     /// [A record data](https://tools.ietf.org/html/rfc1035#section-3.4.1), representing an IPv4
     /// address.

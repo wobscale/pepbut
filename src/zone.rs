@@ -2,6 +2,7 @@
 
 use failure;
 use rmp::{self, Marker};
+use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom, Write};
 
 use Msgpack;
@@ -18,10 +19,71 @@ pub struct Zone {
     /// implement zone transfers so the point is rather moot.
     pub serial: u32,
     /// The collection of records in the zone.
-    records: Vec<Record>,
+    records: HashMap<Name, HashMap<u16, Vec<Record>>>,
 }
 
 impl Zone {
+    /// Creates a new zone.
+    pub fn new(origin: Name, serial: u32) -> Zone {
+        Zone {
+            origin,
+            serial,
+            records: HashMap::new(),
+        }
+    }
+
+    /// Creates a new zone from an iterator of records.
+    pub fn with_records<I>(origin: Name, serial: u32, records: I) -> Zone
+    where
+        I: IntoIterator<Item = Record>,
+    {
+        let mut zone = Zone::new(origin, serial);
+        for record in records {
+            zone.push(record);
+        }
+        zone
+    }
+
+    /// Add a record to the zone.
+    pub fn push(&mut self, record: Record) {
+        self.records
+            .entry(record.name.clone())
+            .or_insert_with(HashMap::new)
+            .entry(record.record_type())
+            .or_insert_with(Vec::new)
+            .push(record)
+    }
+
+    /// Remove a record from the zone.
+    pub fn remove<'a>(&'a mut self, record: &'a Record) {
+        if let Some(h) = self.records.get_mut(&record.name) {
+            if let Some(mut v) = h.get_mut(&record.record_type()) {
+                v.remove_item(record);
+            }
+        }
+    }
+
+    /// Return the number of records in the zone.
+    pub fn len(&self) -> usize {
+        self.records
+            .values()
+            .flat_map(|h| h.values())
+            .map(|v| v.len())
+            .sum()
+    }
+
+    /// Return if the zone is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Return an iterator of all records in the zone.
+    pub fn iter(&self) -> impl Iterator<Item = &Record> {
+        self.records
+            .values()
+            .flat_map(|h| h.values().flat_map(|v| v))
+    }
+
     /// Deserializes a zone file from a reader.
     ///
     /// The reader is required to implement `Seek` due to the need to read the labels at the end of
@@ -50,17 +112,14 @@ impl Zone {
 
         let serial = rmp::decode::read_int(reader)?;
 
+        let mut zone = Zone::new(origin, serial);
+
         let record_len = rmp::decode::read_array_len(reader)?;
-        let mut records = Vec::with_capacity(record_len as usize);
         for _ in 0..record_len {
-            records.push(Record::from_msgpack(reader, &labels)?);
+            zone.push(Record::from_msgpack(reader, &labels)?);
         }
 
-        Ok(Zone {
-            origin,
-            serial,
-            records,
-        })
+        Ok(zone)
     }
 
     /// Serializes a zone file to a writer in one pass.
@@ -76,8 +135,8 @@ impl Zone {
 
         rmp::encode::write_uint(writer, self.serial.into())?;
 
-        rmp::encode::write_array_len(writer, self.records.len() as u32)?;
-        for record in &self.records {
+        rmp::encode::write_array_len(writer, self.len() as u32)?;
+        for record in self.iter() {
             record.to_msgpack(writer, &mut labels)?;
         }
 
@@ -103,7 +162,6 @@ impl Zone {
 mod tests {
     use std::io::Cursor;
     use std::str::FromStr;
-    #[cfg(feature = "nightly")]
     use test::Bencher;
 
     use name::Name;
@@ -198,10 +256,10 @@ mod tests {
 
     lazy_static! {
         static ref ORIGIN_EXAMPLE_INVALID: Name = Name::from_str("example.invalid.").unwrap();
-        static ref ZONE_EXAMPLE_INVALID: Zone = Zone {
-            origin: ORIGIN_EXAMPLE_INVALID.clone(),
-            serial: 1234567890,
-            records: vec![
+        static ref ZONE_EXAMPLE_INVALID: Zone = Zone::with_records(
+            ORIGIN_EXAMPLE_INVALID.clone(),
+            1234567890,
+            vec![
                 ns!(name!(), name!("ns1")),
                 ns!(name!(), name!("ns2")),
                 a!(name!("www")),
@@ -215,17 +273,15 @@ mod tests {
                 srv!(name!("_sip._tcp"), 0, 5, 5060, name!("sip")),
                 txt!(name!(), vec!["v=spf1 -all".to_owned()]),
             ],
-        };
+        );
     }
 
-    #[cfg(feature = "nightly")]
     #[bench]
     fn bench_zone_clone(b: &mut Bencher) {
         ZONE_EXAMPLE_INVALID.clone();
         b.iter(|| ZONE_EXAMPLE_INVALID.clone());
     }
 
-    #[cfg(feature = "nightly")]
     #[bench]
     fn bench_read_example_invalid(b: &mut Bencher) {
         ZONE_EXAMPLE_INVALID.clone();
@@ -235,7 +291,6 @@ mod tests {
         });
     }
 
-    #[cfg(feature = "nightly")]
     #[bench]
     fn bench_write_example_invalid(b: &mut Bencher) {
         ZONE_EXAMPLE_INVALID.clone();
@@ -253,23 +308,32 @@ mod tests {
             *ZONE_EXAMPLE_INVALID,
             Zone::read_from(&mut Cursor::new(buf.as_slice())).unwrap()
         );
+    }
+
+    #[test]
+    fn len_example_invalid() {
+        assert_eq!(ZONE_EXAMPLE_INVALID.len(), 9);
+    }
+
+    #[test]
+    fn iter_example_invalid() {
         assert_eq!(
-            buf,
-            &include_bytes!("../tests/data/example.invalid.zone")[..]
+            *ZONE_EXAMPLE_INVALID,
+            Zone::with_records(
+                ZONE_EXAMPLE_INVALID.origin.clone(),
+                ZONE_EXAMPLE_INVALID.serial,
+                ZONE_EXAMPLE_INVALID.iter().map(|x| x.clone())
+            )
         );
     }
 
     #[test]
     fn too_many_records() {
-        let mut zone = Zone {
-            origin: Name::from_str("example.invalid.").unwrap(),
-            serial: 1234567890,
-            records: Vec::with_capacity(100000),
-        };
+        let mut zone = Zone::new(Name::from_str("example.invalid.").unwrap(), 1234567890);
         for _ in 1..100000 {
-            zone.records.push(a!(name!()));
+            zone.push(a!(name!()));
         }
-        zone.records.push(a!(name!("www")));
+        zone.push(a!(name!("www")));
         let mut buf = Vec::new();
         zone.write_to(&mut buf).unwrap();
     }

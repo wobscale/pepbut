@@ -3,7 +3,9 @@
 //! It consists of an API service for updating records, a web interface that uses the API for users
 //! to update records, and the authoritative DNS server itself.
 
-#![cfg_attr(feature = "nightly", feature(test))]
+#![feature(conservative_impl_trait)]
+#![feature(test)]
+#![feature(vec_remove_item)]
 #![cfg_attr(feature = "cargo-clippy", warn(clippy_pedantic))]
 #![cfg_attr(feature = "cargo-clippy", allow(use_self))]
 
@@ -14,7 +16,6 @@ extern crate idna;
 #[macro_use]
 extern crate lazy_static;
 extern crate rmp;
-#[cfg(feature = "nightly")]
 extern crate test;
 
 pub mod name;
