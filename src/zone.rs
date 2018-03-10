@@ -5,7 +5,7 @@ use rmp::{self, Marker};
 use std::io::{Read, Seek, SeekFrom, Write};
 
 use Msgpack;
-use name::{Label, Name, FQDN};
+use name::{Label, Name};
 use record::Record;
 
 /// A zone is a collection of records belonging to an origin.
@@ -13,7 +13,7 @@ use record::Record;
 #[cfg_attr(test, derive(Clone, PartialEq))]
 pub struct Zone {
     /// The origin of the zone. All records in the zone must be under the origin.
-    pub origin: FQDN,
+    pub origin: Name,
     /// The serial. This should generally always increase with zone updates, but pepbut does not
     /// implement zone transfers so the point is rather moot.
     pub serial: u32,
@@ -46,7 +46,7 @@ impl Zone {
         }
 
         reader.seek(SeekFrom::Start(1))?;
-        let origin = Name::from_msgpack(reader, &labels)?.to_full_name(None)?;
+        let origin = Name::from_msgpack(reader, &labels)?;
 
         let serial = rmp::decode::read_int(reader)?;
 
@@ -72,7 +72,7 @@ impl Zone {
         rmp::encode::write_array_len(writer, 5)?;
         let mut labels = Vec::new();
 
-        self.origin.to_name().to_msgpack(writer, &mut labels)?;
+        self.origin.to_msgpack(writer, &mut labels)?;
 
         rmp::encode::write_uint(writer, self.serial.into())?;
 
@@ -112,11 +112,10 @@ mod tests {
 
     macro_rules! record {
         ($name: expr, $struct: expr) => {{
-            use name::Name;
             use record::Record;
 
             Record {
-                name: Name::from_str($name).unwrap(),
+                name: $name,
                 ttl: 300,
                 rdata: $struct,
             }
@@ -145,7 +144,7 @@ mod tests {
 
     macro_rules! cname {
         ($name: expr, $target: expr) => {
-            record!($name, RData::CNAME(Name::from_str($target).unwrap()))
+            record!($name, RData::CNAME($target))
         };
     }
 
@@ -155,7 +154,7 @@ mod tests {
                 $name,
                 RData::MX {
                     preference: $pref,
-                    exchange: Name::from_str($exch).unwrap(),
+                    exchange: $exch,
                 }
             )
         };
@@ -163,7 +162,7 @@ mod tests {
 
     macro_rules! ns {
         ($name: expr, $ns: expr) => {
-            record!($name, RData::NS(Name::from_str($ns).unwrap()))
+            record!($name, RData::NS($ns))
         };
     }
 
@@ -175,7 +174,7 @@ mod tests {
                     priority: $pri,
                     weight: $wei,
                     port: $port,
-                    target: Name::from_str($target).unwrap(),
+                    target: $target,
                 }
             )
         };
@@ -187,23 +186,34 @@ mod tests {
         };
     }
 
+    macro_rules! name {
+        () => {
+            ORIGIN_EXAMPLE_INVALID.clone()
+        };
+
+        ($name: expr) => {
+            Name::from_str_on_origin($name, &ORIGIN_EXAMPLE_INVALID).unwrap()
+        };
+    }
+
     lazy_static! {
+        static ref ORIGIN_EXAMPLE_INVALID: Name = Name::from_str("example.invalid.").unwrap();
         static ref ZONE_EXAMPLE_INVALID: Zone = Zone {
-            origin: Name::from_str("example.invalid.")
-                .unwrap()
-                .to_full_name(None)
-                .unwrap(),
+            origin: ORIGIN_EXAMPLE_INVALID.clone(),
             serial: 1234567890,
             records: vec![
-                ns!("", "ns1"),
-                ns!("", "ns2"),
-                a!("www"),
-                aaaa!("www"),
-                cname!("☃", "d1234567890.cloudfront.invalid."),
-                mx!("", 10, "mx1.mail.invalid."),
-                mx!("", 20, "mx2.mail.invalid."),
-                srv!("_sip._tcp", 0, 5, 5060, "sip"),
-                txt!("", vec!["v=spf1 -all".to_owned()]),
+                ns!(name!(), name!("ns1")),
+                ns!(name!(), name!("ns2")),
+                a!(name!("www")),
+                aaaa!(name!("www")),
+                cname!(
+                    name!("☃"),
+                    Name::from_str("d1234567890.cloudfront.invalid.").unwrap()
+                ),
+                mx!(name!(), 10, Name::from_str("mx1.mail.invalid.").unwrap()),
+                mx!(name!(), 20, Name::from_str("mx2.mail.invalid.").unwrap()),
+                srv!(name!("_sip._tcp"), 0, 5, 5060, name!("sip")),
+                txt!(name!(), vec!["v=spf1 -all".to_owned()]),
             ],
         };
     }
@@ -252,17 +262,14 @@ mod tests {
     #[test]
     fn too_many_records() {
         let mut zone = Zone {
-            origin: Name::from_str("example.invalid.")
-                .unwrap()
-                .to_full_name(None)
-                .unwrap(),
+            origin: Name::from_str("example.invalid.").unwrap(),
             serial: 1234567890,
             records: Vec::with_capacity(100000),
         };
         for _ in 1..100000 {
-            zone.records.push(a!(""));
+            zone.records.push(a!(name!()));
         }
-        zone.records.push(a!("www"));
+        zone.records.push(a!(name!("www")));
         let mut buf = Vec::new();
         zone.write_to(&mut buf).unwrap();
     }

@@ -28,6 +28,8 @@ pub enum ParseNameError {
 /// A label is a single element in a domain name. For the domain name `example.invalid`, there are
 /// two labels, `example` and `invalid`.
 ///
+/// To create a label, use `Label::from_str`.
+///
 /// Labels in pepbut are atomically reference-counted byte arrays (`Arc<[u8]>`). The byte arrays
 /// always represent the canonical representation of a label (the result of [UTS #46][uts46]
 /// processing, commonly the lowercase ASCII/Punycode form).
@@ -44,28 +46,6 @@ pub struct Label(Arc<[u8]>);
 // `is_empty` makes little sense with a data type that is required to be non-empty
 #[cfg_attr(feature = "cargo-clippy", allow(len_without_is_empty))]
 impl Label {
-    /// Validates and constructs a label from a string. This method normalizes the label to
-    /// lowercase ASCII, converting non-ASCII characters into Punycode according to UTS #46.
-    pub fn from_utf8(s: &str) -> Result<Label, ParseNameError> {
-        if s.starts_with('_') && s.is_ascii()
-            && s.chars().skip(1).all(|c| c.is_alphanumeric() || c == '-')
-        {
-            Label::from_raw_bytes(s.to_lowercase().as_bytes())
-        } else {
-            Label::from_raw_bytes(
-                uts46::to_ascii(
-                    s,
-                    uts46::Flags {
-                        use_std3_ascii_rules: true,
-                        transitional_processing: true,
-                        verify_dns_length: true,
-                    },
-                ).map_err(ParseNameError::InvalidLabel)?
-                    .as_bytes(),
-            )
-        }
-    }
-
     /// Constructs a label from a raw byte array. This method only checks that the length of the
     /// label is 63 characters or less, and assumes that the bytes are lowercase ASCII. Because of
     /// these assumptions the method is private, and only used from `from_utf8` and
@@ -101,6 +81,32 @@ impl fmt::Display for Label {
     }
 }
 
+impl FromStr for Label {
+    type Err = ParseNameError;
+
+    /// Validates and constructs a label from a string. This method normalizes the label to
+    /// lowercase ASCII, converting non-ASCII characters into Punycode according to UTS #46.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.starts_with('_') && s.is_ascii()
+            && s.chars().skip(1).all(|c| c.is_alphanumeric() || c == '-')
+        {
+            Label::from_raw_bytes(s.to_lowercase().as_bytes())
+        } else {
+            Label::from_raw_bytes(
+                uts46::to_ascii(
+                    s,
+                    uts46::Flags {
+                        use_std3_ascii_rules: true,
+                        transitional_processing: true,
+                        verify_dns_length: true,
+                    },
+                ).map_err(ParseNameError::InvalidLabel)?
+                    .as_bytes(),
+            )
+        }
+    }
+}
+
 impl Msgpack for Label {
     fn from_msgpack<R>(reader: &mut R, _: &[Label]) -> Result<Self, failure::Error>
     where
@@ -126,46 +132,32 @@ impl Msgpack for Label {
     }
 }
 
-/// A domain name, which may or may not be a fully-qualified domain name.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Name {
-    /// The labels that make up this name.
-    labels: Vec<Label>,
-    /// Whether this name represents a fully-qualified domain name (FQDN).
-    is_fqdn: bool,
-}
+/// A fully-qualified domain name.
+///
+/// Because the labels are reference-counted byte arrays, we can more efficiently copy the normally
+/// repetitive origins of names without having to handle whether or not domains are fully-qualified
+/// or not.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct Name(Vec<Label>);
 
 impl Name {
-    /// Convert this object to a `FQDN`, given an origin the name belongs to.
-    pub fn to_full_name(&self, origin: Option<&FQDN>) -> Result<FQDN, failure::Error> {
-        Ok(if self.is_fqdn {
-            FQDN {
-                labels: self.labels.clone(),
-            }
-        } else if let Some(origin) = origin {
-            FQDN {
-                labels: self.labels
-                    .clone()
-                    .into_iter()
-                    .chain(origin.labels.clone().into_iter())
-                    .collect(),
-            }
-        } else {
-            bail!("tried to make full name from non-FQDN without an origin");
-        })
+    /// Convenience function for `Name::from_str` to append an origin name.
+    pub fn from_str_on_origin(s: &str, origin: &Name) -> Result<Self, ParseNameError> {
+        let mut name = Name::from_str(s)?;
+        for label in &origin.0 {
+            name.0.push(label.clone());
+        }
+        Ok(name)
     }
 }
 
 impl fmt::Display for Name {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for (i, label) in self.labels.iter().enumerate() {
+        for (i, label) in self.0.iter().enumerate() {
             if i > 0 {
                 write!(f, ".")?;
             }
             write!(f, "{}", label)?;
-        }
-        if self.is_fqdn {
-            write!(f, ".")?;
         }
         Ok(())
     }
@@ -175,25 +167,13 @@ impl FromStr for Name {
     type Err = ParseNameError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.is_empty() {
-            return Ok(Name {
-                labels: Vec::new(),
-                is_fqdn: false,
-            });
-        }
-
-        let (name, is_fqdn) = if s.ends_with('.') {
-            (&s[0..(s.len() - 1)], true)
+        Ok(Name((if s.ends_with('.') {
+            &s[0..(s.len() - 1)]
         } else {
-            (s, false)
-        };
-
-        Ok(Name {
-            labels: name.split('.')
-                .map(Label::from_utf8)
-                .collect::<Result<Vec<_>, _>>()?,
-            is_fqdn,
-        })
+            s
+        }).split('.')
+            .map(Label::from_str)
+            .collect::<Result<Vec<_>, _>>()?))
     }
 }
 
@@ -205,19 +185,16 @@ impl Msgpack for Name {
         let label_len = rmp::decode::read_array_len(reader)? as usize;
         let mut name_labels = Vec::with_capacity(label_len);
         for _ in 0..label_len {
-            name_labels.push(rmp::decode::read_int(reader)?);
+            let label_idx: usize = rmp::decode::read_int(reader)?;
+            name_labels.push(
+                labels
+                    .get(label_idx)
+                    .ok_or_else(|| format_err!("invalid label index: {}", label_idx))?
+                    .clone(),
+            );
         }
 
-        let (name_labels, is_fqdn) = if name_labels.ends_with(&[0]) {
-            (&name_labels[0..(name_labels.len() - 1)], true)
-        } else {
-            (&name_labels[..], false)
-        };
-
-        Ok(Name {
-            labels: name_labels.iter().map(|l| labels[*l - 1].clone()).collect(),
-            is_fqdn,
-        })
+        Ok(Name(name_labels))
     }
 
     #[cfg_attr(feature = "cargo-clippy", allow(cast_possible_truncation))]
@@ -225,58 +202,20 @@ impl Msgpack for Name {
     where
         W: Write,
     {
-        rmp::encode::write_array_len(
-            writer,
-            if self.is_fqdn {
-                self.labels.len() + 1
-            } else {
-                self.labels.len()
-            } as u32,
-        )?;
+        rmp::encode::write_array_len(writer, self.0.len() as u32)?;
 
-        for label in &self.labels {
+        for label in &self.0 {
             rmp::encode::write_uint(
                 writer,
                 if let Some(n) = labels.iter().position(|x| x == label) {
-                    n + 1
+                    n
                 } else {
                     labels.push(label.clone());
-                    labels.len()
+                    labels.len() - 1
                 } as u64,
             )?;
         }
 
-        if self.is_fqdn {
-            rmp::encode::write_uint(writer, 0)?;
-        }
-
-        Ok(())
-    }
-}
-
-/// A fully-qualified domain name. This object differs from `Name` in that it *must* always be
-/// fully-qualified.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct FQDN {
-    /// The labels that make up this name.
-    labels: Vec<Label>,
-}
-
-impl FQDN {
-    /// Convert this object to a `Name`.
-    pub fn to_name(&self) -> Name {
-        Name {
-            labels: self.labels.clone(),
-            is_fqdn: true,
-        }
-    }
-}
-
-impl fmt::Display for FQDN {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for label in &self.labels {
-            write!(f, "{}.", label)?;
-        }
         Ok(())
     }
 }
@@ -289,46 +228,46 @@ mod tests {
 
     #[test]
     fn display() {
-        for s in &["buttslol.net.", "subdomain", "☃.net.", ""] {
+        for s in &[
+            "buttslol.net",
+            "tld",
+            "☃.net",
+            "_sip._udp.wobscale.website",
+        ] {
             assert_eq!(format!("{}", Name::from_str(s).unwrap()), s.to_owned());
         }
+    }
+
+    #[test]
+    fn empty_label() {
+        assert!(Name::from_str("").is_err());
     }
 
     #[test]
     fn from_str() {
         macro_rules! label {
             ($e: expr) => {
-                Label::from_utf8($e).unwrap()
+                Label::from_str($e).unwrap()
             };
         }
 
         assert_eq!(
             Name::from_str("buttslol.net.").unwrap(),
-            Name {
-                labels: vec![label!("buttslol"), label!("net")],
-                is_fqdn: true,
-            }
+            Name(vec![label!("buttslol"), label!("net")])
         );
-        assert_eq!(
-            Name::from_str("subdomain").unwrap(),
-            Name {
-                labels: vec![label!("subdomain")],
-                is_fqdn: false,
-            }
-        );
+        assert_eq!(Name::from_str("tld").unwrap(), Name(vec![label!("tld")]));
         assert_eq!(
             Name::from_str("☃.net.").unwrap(),
-            Name {
-                labels: vec![label!("☃"), label!("net")],
-                is_fqdn: true,
-            }
+            Name(vec![label!("☃"), label!("net")])
         );
         assert_eq!(
-            Name::from_str("").unwrap(),
-            Name {
-                labels: vec![],
-                is_fqdn: false,
-            }
+            Name::from_str("_sip._udp.wobscale.website").unwrap(),
+            Name(vec![
+                label!("_sip"),
+                label!("_udp"),
+                label!("wobscale"),
+                label!("website"),
+            ])
         );
     }
 }
