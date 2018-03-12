@@ -10,8 +10,7 @@ use name::{Label, Name};
 use record::Record;
 
 /// A zone is a collection of records belonging to an origin.
-#[derive(Debug)]
-#[cfg_attr(test, derive(Clone, PartialEq))]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Zone {
     /// The origin of the zone. All records in the zone must be under the origin.
     pub origin: Name,
