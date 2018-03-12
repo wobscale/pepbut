@@ -20,6 +20,11 @@ pub struct Record {
 }
 
 impl Record {
+    /// Create a record from rdata.
+    pub fn new(name: Name, ttl: u32, rdata: RData) -> Record {
+        Record { name, ttl, rdata }
+    }
+
     /// The resource record type.
     pub fn record_type(&self) -> u16 {
         self.rdata.record_type()

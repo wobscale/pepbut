@@ -12,9 +12,6 @@
 #[macro_use]
 extern crate failure;
 extern crate idna;
-#[cfg(test)]
-#[macro_use]
-extern crate lazy_static;
 extern crate rmp;
 extern crate test;
 

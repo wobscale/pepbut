@@ -164,126 +164,83 @@ mod tests {
     use test::Bencher;
 
     use name::Name;
-    use record::RData;
+    use record::{RData, Record};
     use zone::Zone;
 
-    macro_rules! record {
-        ($name: expr, $struct: expr) => {{
-            use record::Record;
-
+    macro_rules! r {
+        ($name: expr, $struct: expr) => {
             Record {
                 name: $name,
                 ttl: 300,
                 rdata: $struct,
             }
-        }};
-    }
-
-    macro_rules! a {
-        ($name: expr) => {
-            a!($name, [192, 0, 2, 1].into())
-        };
-
-        ($name: expr, $addr: expr) => {
-            record!($name, RData::A($addr))
         };
     }
 
-    macro_rules! aaaa {
-        ($name: expr) => {
-            aaaa!($name, [0x2001, 0xdb8, 0, 0, 0, 0, 0, 1].into())
-        };
+    fn zone_example_invalid() -> Zone {
+        let origin = Name::from_str("example.invalid.").unwrap();
 
-        ($name: expr, $addr: expr) => {
-            record!($name, RData::AAAA($addr))
-        };
-    }
+        macro_rules! name {
+            () => {
+                origin.clone()
+            };
 
-    macro_rules! cname {
-        ($name: expr, $target: expr) => {
-            record!($name, RData::CNAME($target))
-        };
-    }
+            ($name: expr) => {
+                Name::from_str_on_origin($name, &origin).unwrap()
+            };
+        }
 
-    macro_rules! mx {
-        ($name: expr, $pref: expr, $exch: expr) => {
-            record!(
-                $name,
-                RData::MX {
-                    preference: $pref,
-                    exchange: $exch,
-                }
-            )
-        };
-    }
-
-    macro_rules! ns {
-        ($name: expr, $ns: expr) => {
-            record!($name, RData::NS($ns))
-        };
-    }
-
-    macro_rules! srv {
-        ($name: expr, $pri: expr, $wei: expr, $port: expr, $target: expr) => {
-            record!(
-                $name,
-                RData::SRV {
-                    priority: $pri,
-                    weight: $wei,
-                    port: $port,
-                    target: $target,
-                }
-            )
-        };
-    }
-
-    macro_rules! txt {
-        ($name: expr, $vs: expr) => {
-            record!($name, RData::TXT($vs))
-        };
-    }
-
-    macro_rules! name {
-        () => {
-            ORIGIN_EXAMPLE_INVALID.clone()
-        };
-
-        ($name: expr) => {
-            Name::from_str_on_origin($name, &ORIGIN_EXAMPLE_INVALID).unwrap()
-        };
-    }
-
-    lazy_static! {
-        static ref ORIGIN_EXAMPLE_INVALID: Name = Name::from_str("example.invalid.").unwrap();
-        static ref ZONE_EXAMPLE_INVALID: Zone = Zone::with_records(
-            ORIGIN_EXAMPLE_INVALID.clone(),
+        Zone::with_records(
+            origin.clone(),
             1234567890,
             vec![
-                ns!(name!(), name!("ns1")),
-                ns!(name!(), name!("ns2")),
-                a!(name!("www")),
-                aaaa!(name!("www")),
-                cname!(
-                    name!("☃"),
-                    Name::from_str("d1234567890.cloudfront.invalid.").unwrap()
+                r!(name!(), RData::NS(name!("ns1"))),
+                r!(name!(), RData::NS(name!("ns2"))),
+                r!(name!("www"), RData::A([192, 0, 2, 1].into())),
+                r!(
+                    name!("www"),
+                    RData::AAAA([0x2001, 0xdb8, 0, 0, 0, 0, 0, 1].into())
                 ),
-                mx!(name!(), 10, Name::from_str("mx1.mail.invalid.").unwrap()),
-                mx!(name!(), 20, Name::from_str("mx2.mail.invalid.").unwrap()),
-                srv!(name!("_sip._tcp"), 0, 5, 5060, name!("sip")),
-                txt!(name!(), vec!["v=spf1 -all".to_owned()]),
+                r!(
+                    name!("☃"),
+                    RData::CNAME(Name::from_str("d1234567890.cloudfront.invalid").unwrap())
+                ),
+                r!(
+                    name!(),
+                    RData::MX {
+                        preference: 10,
+                        exchange: Name::from_str("mx1.mail.invalid.").unwrap(),
+                    }
+                ),
+                r!(
+                    name!(),
+                    RData::MX {
+                        preference: 20,
+                        exchange: Name::from_str("mx2.mail.invalid.").unwrap(),
+                    }
+                ),
+                r!(
+                    name!("_sip._tcp"),
+                    RData::SRV {
+                        priority: 0,
+                        weight: 5,
+                        port: 5060,
+                        target: name!("sip"),
+                    }
+                ),
+                r!(name!(), RData::TXT(vec!["v=spf1 -all".to_owned()])),
             ],
-        );
+        )
     }
 
     #[bench]
     fn bench_zone_clone(b: &mut Bencher) {
-        ZONE_EXAMPLE_INVALID.clone();
-        b.iter(|| ZONE_EXAMPLE_INVALID.clone());
+        let zone = zone_example_invalid();
+        b.iter(|| zone.clone());
     }
 
     #[bench]
     fn bench_read_example_invalid(b: &mut Bencher) {
-        ZONE_EXAMPLE_INVALID.clone();
         b.iter(|| {
             let buf: &[u8] = include_bytes!("../tests/data/example.invalid.zone");
             Zone::read_from(&mut Cursor::new(buf)).unwrap();
@@ -292,47 +249,58 @@ mod tests {
 
     #[bench]
     fn bench_write_example_invalid(b: &mut Bencher) {
-        ZONE_EXAMPLE_INVALID.clone();
+        let zone = zone_example_invalid();
         b.iter(|| {
             let mut buf = Vec::new();
-            ZONE_EXAMPLE_INVALID.write_to(&mut buf).unwrap();
+            zone.write_to(&mut buf).unwrap();
         });
     }
 
     #[test]
     fn read_write_example_invalid() {
         let mut buf = Vec::new();
-        ZONE_EXAMPLE_INVALID.write_to(&mut buf).unwrap();
+        let zone = zone_example_invalid();
+        zone.write_to(&mut buf).unwrap();
         assert_eq!(
-            *ZONE_EXAMPLE_INVALID,
+            zone,
             Zone::read_from(&mut Cursor::new(buf.as_slice())).unwrap()
         );
     }
 
     #[test]
     fn len_example_invalid() {
-        assert_eq!(ZONE_EXAMPLE_INVALID.len(), 9);
+        assert_eq!(zone_example_invalid().len(), 9);
     }
 
     #[test]
     fn iter_example_invalid() {
+        let zone = zone_example_invalid();
         assert_eq!(
-            *ZONE_EXAMPLE_INVALID,
+            zone,
             Zone::with_records(
-                ZONE_EXAMPLE_INVALID.origin.clone(),
-                ZONE_EXAMPLE_INVALID.serial,
-                ZONE_EXAMPLE_INVALID.iter().map(|x| x.clone())
+                zone.origin.clone(),
+                zone.serial,
+                zone.iter().map(|x| x.clone())
             )
         );
     }
 
     #[test]
     fn too_many_records() {
-        let mut zone = Zone::new(Name::from_str("example.invalid.").unwrap(), 1234567890);
+        let origin = Name::from_str("example.invalid").unwrap();
+        let mut zone = Zone::new(origin.clone(), 1234567890);
         for _ in 1..100000 {
-            zone.push(a!(name!()));
+            zone.push(Record::new(
+                origin.clone(),
+                300,
+                RData::A([192, 0, 2, 1].into()),
+            ));
         }
-        zone.push(a!(name!("www")));
+        zone.push(Record::new(
+            Name::from_str_on_origin("www", &origin).unwrap(),
+            300,
+            RData::A([192, 0, 2, 1].into()),
+        ));
         let mut buf = Vec::new();
         zone.write_to(&mut buf).unwrap();
     }
