@@ -62,6 +62,16 @@ impl Zone {
         }
     }
 
+    pub fn lookup(&self, name: &Name, record_type: u16) -> LookupResult {
+        match self.records.get(name) {
+            Some(h) => match h.get(&record_type) {
+                Some(v) => LookupResult::Records(v),
+                None => LookupResult::NameExists,
+            },
+            None => LookupResult::NoName,
+        }
+    }
+
     /// Return the number of records in the zone.
     pub fn len(&self) -> usize {
         self.records
@@ -157,6 +167,13 @@ impl Zone {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub enum LookupResult<'a> {
+    Records(&'a Vec<Record>),
+    NameExists,
+    NoName,
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
@@ -165,7 +182,7 @@ mod tests {
 
     use name::Name;
     use record::{RData, Record};
-    use zone::Zone;
+    use zone::{LookupResult, Zone};
 
     macro_rules! r {
         ($name: expr, $struct: expr) => {
@@ -282,6 +299,21 @@ mod tests {
                 zone.serial,
                 zone.iter().map(|x| x.clone())
             )
+        );
+    }
+
+    #[test]
+    fn lookup_example_invalid() {
+        let zone = zone_example_invalid();
+        assert_eq!(
+            zone.lookup(&Name::from_str("www.example.invalid").unwrap(), 1),
+            LookupResult::Records(&vec![
+                Record::new(
+                    Name::from_str("www.example.invalid").unwrap(),
+                    300,
+                    RData::A([192, 0, 2, 1].into()),
+                ),
+            ])
         );
     }
 
