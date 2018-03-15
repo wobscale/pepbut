@@ -62,6 +62,10 @@ impl Zone {
         }
     }
 
+    /// Look up a record in a zone.
+    ///
+    /// Returns `LookupResult`, which provides two types of negative responses so that the NXDOMAIN
+    /// error code can be set accurately.
     pub fn lookup(&self, name: &Name, record_type: u16) -> LookupResult {
         match self.records.get(name) {
             Some(h) => match h.get(&record_type) {
@@ -167,10 +171,14 @@ impl Zone {
     }
 }
 
+/// The result of a record lookup.
 #[derive(Debug, PartialEq)]
 pub enum LookupResult<'a> {
+    /// Records of that name and type exist, and here is a reference to the `Vec<Record>`.
     Records(&'a Vec<Record>),
+    /// Records of that name exist, but not of that type. NXDOMAIN must not be set.
     NameExists,
+    /// No records of that name exist. NXDOMAIN must be set.
     NoName,
 }
 
