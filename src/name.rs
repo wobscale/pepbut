@@ -9,14 +9,17 @@ use idna::uts46;
 use rmp;
 use std::fmt;
 use std::io::{Read, Write};
+use std::rc::Rc;
 use std::str::{self, FromStr};
-use std::sync::Arc;
 
 use Msgpack;
 
 /// Errors that can occur while parsing a `Name`.
 #[derive(Debug, Fail)]
 pub enum ParseNameError {
+    /// The label is empty.
+    #[fail(display = "empty label")]
+    EmptyLabel,
     /// The label contains invalid characters according to UTS #46.
     #[fail(display = "label contains invalid characters: {:?}", _0)]
     InvalidLabel(uts46::Errors),
@@ -25,120 +28,68 @@ pub enum ParseNameError {
     LabelTooLong(usize),
 }
 
-/// A label is a single element in a domain name. For the domain name `example.invalid`, there are
-/// two labels, `example` and `invalid`.
+/// Constructs a label from a raw byte array. This method only checks that the length of the
+/// label is 63 characters or less, and assumes that the bytes are lowercase ASCII.
 ///
-/// To create a label, use `Label::from_str`.
+/// This method should only be used if you already know the label has been encoded and is lowercase
+/// (e.g. you are reading from a binary zone file or from a lowercased DNS query message).
+pub fn label_from_raw_bytes(bytes: &[u8]) -> Result<Rc<[u8]>, ParseNameError> {
+    if bytes.len() > 63 {
+        Err(ParseNameError::LabelTooLong(bytes.len()))
+    } else {
+        Ok(Rc::from(bytes))
+    }
+}
+
+/// Validates and constructs a label from a string. This method normalizes the label to
+/// lowercase ASCII, converting non-ASCII characters into Punycode according to UTS #46.
+fn label_from_str(s: &str) -> Result<Rc<[u8]>, ParseNameError> {
+    /// Checks if a byte is valid for a DNS label.
+    fn byte_ok(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || b == b'-'
+    }
+
+    if s.is_empty() {
+        Err(ParseNameError::EmptyLabel)
+    } else if (s.starts_with('_') && s.bytes().skip(1).all(byte_ok)) || s.bytes().all(byte_ok) {
+        label_from_raw_bytes(s.to_lowercase().as_bytes())
+    } else {
+        label_from_raw_bytes(
+            uts46::to_ascii(
+                s,
+                uts46::Flags {
+                    use_std3_ascii_rules: true,
+                    transitional_processing: true,
+                    verify_dns_length: true,
+                },
+            ).map_err(ParseNameError::InvalidLabel)?
+                .as_bytes(),
+        )
+    }
+}
+
+/// A fully-qualified domain name.
 ///
-/// Labels in pepbut are atomically reference-counted byte arrays (`Arc<[u8]>`). The byte arrays
+/// Domain names are made up of labels. For the domain name `example.invalid`, there are two
+/// labels, `example` and `invalid`.
+///
+/// A domain name is fully-qualified if the rightmost label is a top-level domain.
+///
+/// Labels in pepbut are atomically reference-counted byte arrays (`Rc<[u8]>`). The byte arrays
 /// always represent the canonical representation of a label (the result of [UTS #46][uts46]
 /// processing, commonly the lowercase ASCII/Punycode form).
 ///
 /// [uts46]: https://www.unicode.org/reports/tr46/
 ///
 /// Making the byte arrays reference-counted is part of making the pepbut name server more memory
-/// efficient. The other part is [`Zone`](../zone/struct.Zone.html)'s packing of labels by
-/// reference, allowing each label to be stored in memory exactly once per zone when read from a
-/// zone file.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct Label(Arc<[u8]>);
-
-// `is_empty` makes little sense with a data type that is required to be non-empty
-#[cfg_attr(feature = "cargo-clippy", allow(len_without_is_empty))]
-impl Label {
-    /// Constructs a label from a raw byte array. This method only checks that the length of the
-    /// label is 63 characters or less, and assumes that the bytes are lowercase ASCII. Because of
-    /// these assumptions the method is private, and only used from `from_utf8` and
-    /// `Msgpack::from_msgpack`.
-    fn from_raw_bytes(bytes: &[u8]) -> Result<Label, ParseNameError> {
-        if bytes.len() > 63 {
-            Err(ParseNameError::LabelTooLong(bytes.len()))
-        } else {
-            Ok(Label(Arc::from(bytes)))
-        }
-    }
-
-    /// Returns the length of the byte array of this label.
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-}
-
-impl fmt::Display for Label {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            uts46::to_unicode(
-                str::from_utf8(&self.0).expect("label can only contain UTF-8 bytes"),
-                uts46::Flags {
-                    use_std3_ascii_rules: true,
-                    transitional_processing: true,
-                    verify_dns_length: true,
-                }
-            ).0
-        )
-    }
-}
-
-impl FromStr for Label {
-    type Err = ParseNameError;
-
-    /// Validates and constructs a label from a string. This method normalizes the label to
-    /// lowercase ASCII, converting non-ASCII characters into Punycode according to UTS #46.
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.starts_with('_') && s.is_ascii()
-            && s.chars().skip(1).all(|c| c.is_alphanumeric() || c == '-')
-        {
-            Label::from_raw_bytes(s.to_lowercase().as_bytes())
-        } else {
-            Label::from_raw_bytes(
-                uts46::to_ascii(
-                    s,
-                    uts46::Flags {
-                        use_std3_ascii_rules: true,
-                        transitional_processing: true,
-                        verify_dns_length: true,
-                    },
-                ).map_err(ParseNameError::InvalidLabel)?
-                    .as_bytes(),
-            )
-        }
-    }
-}
-
-impl Msgpack for Label {
-    fn from_msgpack<R>(reader: &mut R, _: &[Label]) -> Result<Self, failure::Error>
-    where
-        R: Read,
-    {
-        let len = rmp::decode::read_str_len(reader)? as usize;
-        let mut buf = Vec::with_capacity(len);
-        buf.resize(len, 0);
-        reader.read_exact(&mut buf[..])?;
-
-        Ok(Label::from_raw_bytes(&buf[..])?)
-    }
-
-    #[cfg_attr(feature = "cargo-clippy", allow(cast_possible_truncation))]
-    fn to_msgpack<W>(&self, writer: &mut W, _: &mut Vec<Label>) -> Result<(), failure::Error>
-    where
-        W: Write,
-    {
-        rmp::encode::write_str_len(writer, self.len() as u32)?;
-        writer.write_all(&self.0)?;
-
-        Ok(())
-    }
-}
-
-/// A fully-qualified domain name.
+/// efficient. The other part is `Zone`'s packing of labels by reference, allowing each label to be
+/// stored in memory exactly once per zone when read from a zone file.
 ///
 /// Because the labels are reference-counted byte arrays, we can more efficiently copy the normally
 /// repetitive origins of names without having to handle whether or not domains are fully-qualified
 /// or not.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct Name(Vec<Label>);
+pub struct Name(Vec<Rc<[u8]>>);
 
 impl Name {
     /// Convenience function for `Name::from_str` to append an origin name.
@@ -157,7 +108,18 @@ impl fmt::Display for Name {
             if i > 0 {
                 write!(f, ".")?;
             }
-            write!(f, "{}", label)?;
+            write!(
+                f,
+                "{}",
+                uts46::to_unicode(
+                    str::from_utf8(label).expect("label can only contain UTF-8 bytes"),
+                    uts46::Flags {
+                        use_std3_ascii_rules: true,
+                        transitional_processing: true,
+                        verify_dns_length: true,
+                    },
+                ).0
+            )?;
         }
         Ok(())
     }
@@ -172,13 +134,13 @@ impl FromStr for Name {
         } else {
             s
         }).split('.')
-            .map(Label::from_str)
+            .map(label_from_str)
             .collect::<Result<Vec<_>, _>>()?))
     }
 }
 
 impl Msgpack for Name {
-    fn from_msgpack<R>(reader: &mut R, labels: &[Label]) -> Result<Self, failure::Error>
+    fn from_msgpack<R>(reader: &mut R, labels: &[Rc<[u8]>]) -> Result<Self, failure::Error>
     where
         R: Read,
     {
@@ -198,7 +160,11 @@ impl Msgpack for Name {
     }
 
     #[cfg_attr(feature = "cargo-clippy", allow(cast_possible_truncation))]
-    fn to_msgpack<W>(&self, writer: &mut W, labels: &mut Vec<Label>) -> Result<(), failure::Error>
+    fn to_msgpack<W>(
+        &self,
+        writer: &mut W,
+        labels: &mut Vec<Rc<[u8]>>,
+    ) -> Result<(), failure::Error>
     where
         W: Write,
     {
@@ -224,7 +190,7 @@ impl Msgpack for Name {
 mod tests {
     use std::str::FromStr;
 
-    use name::{Label, Name};
+    use name::{label_from_str, Name};
 
     #[test]
     fn display() {
@@ -247,7 +213,7 @@ mod tests {
     fn from_str() {
         macro_rules! label {
             ($e: expr) => {
-                Label::from_str($e).unwrap()
+                label_from_str($e).unwrap()
             };
         }
 
@@ -255,10 +221,18 @@ mod tests {
             Name::from_str("buttslol.net.").unwrap(),
             Name(vec![label!("buttslol"), label!("net")])
         );
+        assert_eq!(
+            Name::from_str("BUTTSLOL.net.").unwrap(),
+            Name(vec![label!("buttslol"), label!("net")])
+        );
         assert_eq!(Name::from_str("tld").unwrap(), Name(vec![label!("tld")]));
         assert_eq!(
             Name::from_str("☃.net.").unwrap(),
             Name(vec![label!("☃"), label!("net")])
+        );
+        assert_eq!(
+            Name::from_str("EXAMPLE-☃.net.").unwrap(),
+            Name(vec![label!("example-☃"), label!("net")])
         );
         assert_eq!(
             Name::from_str("_sip._udp.wobscale.website").unwrap(),

@@ -20,19 +20,18 @@ pub mod record;
 pub mod zone;
 
 use std::io::{Read, Write};
-
-use name::Label;
+use std::rc::Rc;
 
 /// A trait for objects that can be serialized to or deserialized within the context of serializing
 /// or deserializing zones.
 trait Msgpack: Sized {
     /// Deserialize this object from a MessagePack reader.
-    fn from_msgpack<R>(reader: &mut R, labels: &[Label]) -> Result<Self, failure::Error>
+    fn from_msgpack<R>(reader: &mut R, labels: &[Rc<[u8]>]) -> Result<Self, failure::Error>
     where
         R: Read;
 
     /// Serialize this object to a MessagePack reader.
-    fn to_msgpack<W>(&self, &mut W, labels: &mut Vec<Label>) -> Result<(), failure::Error>
+    fn to_msgpack<W>(&self, &mut W, labels: &mut Vec<Rc<[u8]>>) -> Result<(), failure::Error>
     where
         W: Write;
 }

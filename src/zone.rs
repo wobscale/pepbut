@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom, Write};
 
 use Msgpack;
-use name::{Label, Name};
+use name::{self, Name};
 use record::Record;
 
 /// A zone is a collection of records belonging to an origin.
@@ -117,7 +117,11 @@ impl Zone {
         let label_len = rmp::decode::read_array_len(reader)? as usize;
         let mut labels = Vec::with_capacity(label_len);
         for _ in 0..label_len {
-            labels.push(Label::from_msgpack(reader, &[])?);
+            let len = rmp::decode::read_str_len(reader)? as usize;
+            let mut buf = Vec::with_capacity(len);
+            buf.resize(len, 0);
+            reader.read_exact(&mut buf[..])?;
+            labels.push(name::label_from_raw_bytes(&buf[..])?);
         }
 
         reader.seek(SeekFrom::Start(1))?;
@@ -161,7 +165,8 @@ impl Zone {
                 _ => unreachable!(),
             };
         for label in labels {
-            label.to_msgpack(writer, &mut vec![])?;
+            rmp::encode::write_str_len(writer, label.len() as u32)?;
+            writer.write_all(&label)?;
             bytes_written += label.len() as u64 + if label.len() < 32 { 1 } else { 2 };
         }
 

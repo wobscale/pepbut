@@ -4,9 +4,10 @@ use failure;
 use rmp;
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::rc::Rc;
 
 use Msgpack;
-use name::{Label, Name};
+use name::Name;
 
 /// A record maps an owner domain name to a record data value, associated with a time-to-live.
 #[derive(Debug, Clone, PartialEq)]
@@ -32,7 +33,7 @@ impl Record {
 }
 
 impl Msgpack for Record {
-    fn from_msgpack<R>(reader: &mut R, labels: &[Label]) -> Result<Self, failure::Error>
+    fn from_msgpack<R>(reader: &mut R, labels: &[Rc<[u8]>]) -> Result<Self, failure::Error>
     where
         R: Read,
     {
@@ -48,7 +49,11 @@ impl Msgpack for Record {
         Ok(Record { name, ttl, rdata })
     }
 
-    fn to_msgpack<W>(&self, writer: &mut W, labels: &mut Vec<Label>) -> Result<(), failure::Error>
+    fn to_msgpack<W>(
+        &self,
+        writer: &mut W,
+        labels: &mut Vec<Rc<[u8]>>,
+    ) -> Result<(), failure::Error>
     where
         W: Write,
     {
@@ -127,7 +132,7 @@ impl RData {
 }
 
 impl Msgpack for RData {
-    fn from_msgpack<R>(reader: &mut R, labels: &[Label]) -> Result<Self, failure::Error>
+    fn from_msgpack<R>(reader: &mut R, labels: &[Rc<[u8]>]) -> Result<Self, failure::Error>
     where
         R: Read,
     {
@@ -219,7 +224,11 @@ impl Msgpack for RData {
     }
 
     #[cfg_attr(feature = "cargo-clippy", allow(cast_possible_truncation))]
-    fn to_msgpack<W>(&self, writer: &mut W, labels: &mut Vec<Label>) -> Result<(), failure::Error>
+    fn to_msgpack<W>(
+        &self,
+        writer: &mut W,
+        labels: &mut Vec<Rc<[u8]>>,
+    ) -> Result<(), failure::Error>
     where
         W: Write,
     {
