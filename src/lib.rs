@@ -4,7 +4,6 @@
 //! to update records, and the authoritative DNS server itself.
 
 #![feature(test)]
-#![feature(vec_remove_item)]
 #![cfg_attr(feature = "cargo-clippy", warn(clippy_pedantic))]
 #![cfg_attr(feature = "cargo-clippy", allow(use_self))]
 

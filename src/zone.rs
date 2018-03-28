@@ -57,7 +57,9 @@ impl Zone {
     pub fn remove<'a>(&'a mut self, record: &'a Record) {
         if let Some(h) = self.records.get_mut(&record.name) {
             if let Some(mut v) = h.get_mut(&record.record_type()) {
-                v.remove_item(record);
+                if let Some(pos) = v.iter().position(|x| x == record) {
+                    v.remove(pos);
+                }
             }
         }
     }
@@ -184,6 +186,17 @@ pub enum LookupResult<'a> {
     NoName,
 }
 
+impl<'a> LookupResult<'a> {
+    /// Returns `true` if the lookup contains no records.
+    pub fn is_empty(&self) -> bool {
+        match *self {
+            // v should never be empty here but worth checking anyway
+            LookupResult::Records(v) => v.is_empty(),
+            LookupResult::NameExists | LookupResult::NoName => true,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
@@ -294,6 +307,18 @@ mod tests {
             zone,
             Zone::read_from(&mut Cursor::new(buf.as_slice())).unwrap()
         );
+    }
+
+    #[test]
+    fn zone_remove() {
+        let mut zone = zone_example_invalid();
+        let www = Name::from_str("www.example.invalid").unwrap();
+        zone.remove(&Record {
+            name: www.clone(),
+            ttl: 300,
+            rdata: RData::A([192, 0, 2, 1].into()),
+        });
+        assert!(zone.lookup(&www, 1).is_empty());
     }
 
     #[test]
