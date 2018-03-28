@@ -8,6 +8,7 @@ license = "MIT/Apache-2.0"
 lto = true
 
 [dependencies]
+byteorder = "1.2"
 failure = "0.1"
 idna = "0.1"
 rmp = "0.8"

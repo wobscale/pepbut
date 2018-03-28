@@ -8,11 +8,12 @@ use failure;
 use idna::uts46;
 use rmp;
 use std::fmt;
-use std::io::{Read, Write};
+use std::io::{Cursor, Read, Write};
 use std::rc::Rc;
 use std::str::{self, FromStr};
 
 use Msgpack;
+use wire::{ProtocolDecode, ProtocolDecodeError};
 
 /// Errors that can occur while parsing a `Name`.
 #[derive(Debug, Fail)]
@@ -182,11 +183,51 @@ impl Msgpack for Name {
     }
 }
 
+impl ProtocolDecode for Name {
+    fn decode<T>(buf: &mut Cursor<T>) -> Result<Self, ProtocolDecodeError>
+    where
+        T: AsRef<[u8]>,
+    {
+        let mut name = Name(Vec::new());
+        let mut orig_pos = 0;
+        let mut jumps = 0;
+
+        loop {
+            let length = u8::decode(buf)?;
+            if length == 0 {
+                if jumps > 0 {
+                    buf.set_position(orig_pos);
+                }
+                return Ok(name);
+            } else if length > 63 {
+                let offset = ((u16::from(length) & 0x3f) << 8) + u16::from(u8::decode(buf)?);
+                if jumps == 0 {
+                    orig_pos = buf.position();
+                } else if jumps == 20 {
+                    return Err(ProtocolDecodeError::NamePointerRecursionLimitReached);
+                }
+                jumps += 1;
+                buf.set_position(offset.into());
+            } else {
+                name.0.push(Rc::from(read_exact!(buf, length)?));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
     use std::str::FromStr;
 
     use name::{label_from_str, Name};
+    use wire::ProtocolDecode;
+
+    macro_rules! label {
+        ($e: expr) => {
+            label_from_str($e).unwrap()
+        };
+    }
 
     #[test]
     fn display() {
@@ -207,12 +248,6 @@ mod tests {
 
     #[test]
     fn from_str() {
-        macro_rules! label {
-            ($e: expr) => {
-                label_from_str($e).unwrap()
-            };
-        }
-
         assert_eq!(
             Name::from_str("buttslol.net.").unwrap(),
             Name(vec![label!("buttslol"), label!("net")])
@@ -239,5 +274,26 @@ mod tests {
                 label!("website"),
             ])
         );
+    }
+
+    #[test]
+    fn decode() {
+        let mut buf = Cursor::new(b"\x07example\x07invalid\0\x04blah\xc0\x08");
+        assert_eq!(
+            Name::decode(&mut buf).unwrap(),
+            Name(vec![label!("example"), label!("invalid")])
+        );
+        assert_eq!(buf.position(), 17);
+        assert_eq!(
+            Name::decode(&mut buf).unwrap(),
+            Name(vec![label!("blah"), label!("invalid")])
+        );
+        assert_eq!(buf.position(), 24);
+    }
+
+    #[test]
+    fn decode_infinite() {
+        let mut buf = Cursor::new(b"\xc0\x00");
+        assert!(Name::decode(&mut buf).is_err());
     }
 }

@@ -8,6 +8,7 @@
 #![cfg_attr(feature = "cargo-clippy", warn(clippy_pedantic))]
 #![cfg_attr(feature = "cargo-clippy", allow(use_self))]
 
+extern crate byteorder;
 #[macro_use]
 extern crate failure;
 extern crate idna;
@@ -40,6 +41,7 @@ mod macros {
 
 pub mod name;
 pub mod record;
+pub mod wire;
 pub mod zone;
 
 use std::io::{Read, Write};
