@@ -61,6 +61,12 @@ impl Zone {
                     v.remove(pos);
                 }
             }
+            if h.get(&record.record_type()).map(|v| v.is_empty()) == Some(true) {
+                h.remove(&record.record_type());
+            }
+        }
+        if self.records.get(&record.name).map(|h| h.is_empty()) == Some(true) {
+            self.records.remove(&record.name);
         }
     }
 
@@ -319,6 +325,15 @@ mod tests {
             rdata: RData::A([192, 0, 2, 1].into()),
         });
         assert!(zone.lookup(&www, 1).is_empty());
+        assert!(zone.records.get(&www).is_some());
+        assert!(zone.records.get(&www).unwrap().get(&1).is_none());
+        zone.remove(&Record {
+            name: www.clone(),
+            ttl: 300,
+            rdata: RData::AAAA([0x2001, 0xdb8, 0, 0, 0, 0, 0, 1].into()),
+        });
+        assert!(zone.lookup(&www, 28).is_empty());
+        assert!(zone.records.get(&www).is_none());
     }
 
     #[test]
