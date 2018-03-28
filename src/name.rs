@@ -92,13 +92,9 @@ fn label_from_str(s: &str) -> Result<Rc<[u8]>, ParseNameError> {
 pub struct Name(Vec<Rc<[u8]>>);
 
 impl Name {
-    /// Convenience function for `Name::from_str` to append an origin name.
-    pub fn from_str_on_origin(s: &str, origin: &Name) -> Result<Self, ParseNameError> {
-        let mut name = Name::from_str(s)?;
-        for label in &origin.0 {
-            name.0.push(label.clone());
-        }
-        Ok(name)
+    /// Clones and appends all labels in an origin `Name` to this `Name`.
+    pub fn extend(&mut self, origin: &Name) {
+        self.0.extend(origin.0.iter().cloned())
     }
 }
 

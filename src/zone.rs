@@ -212,9 +212,11 @@ mod tests {
                 origin.clone()
             };
 
-            ($name: expr) => {
-                Name::from_str_on_origin($name, &origin).unwrap()
-            };
+            ($name: expr) => {{
+                let mut n = Name::from_str($name).unwrap();
+                n.extend(&origin);
+                n
+            }};
         }
 
         Zone::with_records(
@@ -339,7 +341,7 @@ mod tests {
             ));
         }
         zone.push(Record::new(
-            Name::from_str_on_origin("www", &origin).unwrap(),
+            Name::from_str("www.example.invalid").unwrap(),
             300,
             RData::A([192, 0, 2, 1].into()),
         ));
