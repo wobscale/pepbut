@@ -3,7 +3,6 @@
 //! It consists of an API service for updating records, a web interface that uses the API for users
 //! to update records, and the authoritative DNS server itself.
 
-#![feature(conservative_impl_trait)]
 #![feature(test)]
 #![feature(vec_remove_item)]
 #![cfg_attr(feature = "cargo-clippy", warn(clippy_pedantic))]
