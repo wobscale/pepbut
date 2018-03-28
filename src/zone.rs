@@ -117,11 +117,8 @@ impl Zone {
         let label_len = rmp::decode::read_array_len(reader)? as usize;
         let mut labels = Vec::with_capacity(label_len);
         for _ in 0..label_len {
-            let len = rmp::decode::read_str_len(reader)? as usize;
-            let mut buf = Vec::with_capacity(len);
-            buf.resize(len, 0);
-            reader.read_exact(&mut buf[..])?;
-            labels.push(name::label_from_raw_bytes(&buf[..])?);
+            let len = rmp::decode::read_str_len(reader)?;
+            labels.push(name::label_from_raw_bytes(&read_exact!(reader, len)?)?);
         }
 
         reader.seek(SeekFrom::Start(1))?;

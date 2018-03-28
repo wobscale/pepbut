@@ -211,11 +211,8 @@ impl Msgpack for RData {
                 let n = rmp::decode::read_array_len(reader)? as usize;
                 let mut data = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let len = rmp::decode::read_str_len(reader)? as usize;
-                    let mut buf = Vec::with_capacity(len);
-                    buf.resize(len, 0);
-                    reader.read_exact(&mut buf[..])?;
-                    data.push(String::from_utf8(buf)?);
+                    let len = rmp::decode::read_str_len(reader)?;
+                    data.push(String::from_utf8(read_exact!(reader, len)?)?);
                 }
                 RData::TXT(data)
             }
