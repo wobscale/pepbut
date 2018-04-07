@@ -282,12 +282,6 @@ mod tests {
     }
 
     #[bench]
-    fn bench_zone_clone(b: &mut Bencher) {
-        let zone = zone_example_invalid();
-        b.iter(|| zone.clone());
-    }
-
-    #[bench]
     fn bench_read_example_invalid(b: &mut Bencher) {
         b.iter(|| {
             let buf: &[u8] = include_bytes!("../tests/data/example.invalid.zone");
