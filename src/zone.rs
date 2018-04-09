@@ -298,7 +298,7 @@ mod tests {
                         target: name!("sip"),
                     }
                 ),
-                r!(name!(), RData::TXT(vec!["v=spf1 -all".to_owned()])),
+                r!(name!(), RData::TXT("v=spf1 -all".to_owned())),
             ],
         )
     }

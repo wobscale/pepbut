@@ -118,8 +118,9 @@ pub enum RData {
         target: Name,
     },
     /// [TXT record data](https://tools.ietf.org/html/rfc1035#section-3.3.14), used to represent
-    /// descriptive text.
-    TXT(Vec<String>),
+    /// descriptive text. The string is split up along 255-byte boundaries when encoded in a
+    /// response message.
+    TXT(String),
 }
 
 impl RData {
@@ -215,13 +216,8 @@ impl Msgpack for RData {
             }
             // TXT: [str]
             16 => {
-                let n = rmp::decode::read_array_len(reader)? as usize;
-                let mut data = Vec::with_capacity(n);
-                for _ in 0..n {
-                    let len = rmp::decode::read_str_len(reader)?;
-                    data.push(String::from_utf8(read_exact!(reader, len)?)?);
-                }
-                RData::TXT(data)
+                let len = rmp::decode::read_str_len(reader)?;
+                RData::TXT(String::from_utf8(read_exact!(reader, len)?)?)
             }
             s => bail!("unrecognized rdata type: {}", s),
         })
@@ -269,11 +265,8 @@ impl Msgpack for RData {
                 target.to_msgpack(writer, labels)?;
             }
             RData::TXT(ref data) => {
-                rmp::encode::write_array_len(writer, data.len() as u32)?;
-                for datum in data {
-                    rmp::encode::write_str_len(writer, datum.len() as u32)?;
-                    writer.write_all(datum.as_bytes())?;
-                }
+                rmp::encode::write_str_len(writer, data.len() as u32)?;
+                writer.write_all(data.as_bytes())?;
             }
         }
 
