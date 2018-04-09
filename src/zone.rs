@@ -7,7 +7,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 
 use Msgpack;
 use name::{self, Name};
-use record::Record;
+use record::{Record, RecordTrait};
 
 /// A zone is a collection of records belonging to an origin.
 #[derive(Debug, Clone, PartialEq)]
@@ -78,9 +78,9 @@ impl Zone {
         match self.records.get(name) {
             Some(h) => match h.get(&record_type) {
                 Some(v) => LookupResult::Records(v),
-                None => LookupResult::NameExists,
+                None => LookupResult::NameExists(self.soa_record()),
             },
-            None => LookupResult::NoName,
+            None => LookupResult::NoName(self.soa_record()),
         }
     }
 
@@ -103,6 +103,13 @@ impl Zone {
         self.records
             .values()
             .flat_map(|h| h.values().flat_map(|v| v))
+    }
+
+    pub fn soa_record(&self) -> SOARecord {
+        SOARecord {
+            origin: &self.origin,
+            serial: &self.serial,
+        }
     }
 
     /// Deserializes a zone file from a reader.
@@ -181,15 +188,30 @@ impl Zone {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub struct SOARecord<'a> {
+    origin: &'a Name,
+    serial: &'a u32,
+}
+
+impl<'a> RecordTrait for SOARecord<'a> {
+    fn record_type(&self) -> u16 {
+        6
+    }
+}
+
 /// The result of a record lookup.
 #[derive(Debug, PartialEq)]
 pub enum LookupResult<'a> {
-    /// Records of that name and type exist, and here is a reference to the `Vec<Record>`.
+    /// Records of that name and type exist. The value is a reference to the `Vec<Record>` for that
+    /// name and type.
     Records(&'a Vec<Record>),
-    /// Records of that name exist, but not of that type. NXDOMAIN must not be set.
-    NameExists,
-    /// No records of that name exist. NXDOMAIN must be set.
-    NoName,
+    /// Records of that name exist, but not of that type. NXDOMAIN must not be set. The value is
+    /// the SOA record that must be included in the response.
+    NameExists(SOARecord<'a>),
+    /// No records of that name exist. NXDOMAIN must be set. The value is the SOA record that must
+    /// be included in the response.
+    NoName(SOARecord<'a>),
 }
 
 impl<'a> LookupResult<'a> {
@@ -198,7 +220,7 @@ impl<'a> LookupResult<'a> {
         match *self {
             // v should never be empty here but worth checking anyway
             LookupResult::Records(v) => v.is_empty(),
-            LookupResult::NameExists | LookupResult::NoName => true,
+            LookupResult::NameExists(_) | LookupResult::NoName(_) => true,
         }
     }
 }
@@ -211,7 +233,7 @@ mod tests {
 
     use name::Name;
     use record::{RData, Record};
-    use zone::{LookupResult, Zone};
+    use zone::{LookupResult, SOARecord, Zone};
 
     macro_rules! r {
         ($name: expr, $struct: expr) => {
@@ -306,6 +328,17 @@ mod tests {
         assert_eq!(
             zone,
             Zone::read_from(&mut Cursor::new(buf.as_slice())).unwrap()
+        );
+    }
+
+    #[test]
+    fn zone_soa_record() {
+        assert_eq!(
+            zone_example_invalid().soa_record(),
+            SOARecord {
+                origin: &Name::from_str("example.invalid.").unwrap(),
+                serial: &1234567890,
+            }
         );
     }
 

@@ -9,6 +9,12 @@ use std::rc::Rc;
 use Msgpack;
 use name::Name;
 
+#[cfg_attr(feature = "cargo-clippy", allow(stutter))]
+pub trait RecordTrait {
+    /// The resource record type.
+    fn record_type(&self) -> u16;
+}
+
 /// A record maps an owner domain name to a record data value, associated with a time-to-live.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Record {
@@ -24,11 +30,6 @@ impl Record {
     /// Create a record from rdata.
     pub fn new(name: Name, ttl: u32, rdata: RData) -> Record {
         Record { name, ttl, rdata }
-    }
-
-    /// The resource record type.
-    pub fn record_type(&self) -> u16 {
-        self.rdata.record_type()
     }
 }
 
@@ -65,6 +66,12 @@ impl Msgpack for Record {
         self.rdata.to_msgpack(writer, labels)?;
 
         Ok(())
+    }
+}
+
+impl RecordTrait for Record {
+    fn record_type(&self) -> u16 {
+        self.rdata.record_type()
     }
 }
 
