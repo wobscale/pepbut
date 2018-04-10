@@ -4,6 +4,13 @@ version = "0.1.0"
 authors = ["Iliana Weller <ilianaw@buttslol.net>"]
 license = "MIT/Apache-2.0"
 
+[lib]
+bench = false
+
+[[bench]]
+name = "bench_main"
+harness = false
+
 [profile.release]
 lto = true
 
@@ -12,3 +19,6 @@ byteorder = "1.2"
 failure = "0.1"
 idna = "0.1"
 rmp = "0.8"
+
+[dev-dependencies]
+criterion = "0.2"

@@ -3,7 +3,6 @@
 //! It consists of an API service for updating records, a web interface that uses the API for users
 //! to update records, and the authoritative DNS server itself.
 
-#![feature(test)]
 #![cfg_attr(feature = "cargo-clippy", warn(clippy_pedantic))]
 #![cfg_attr(feature = "cargo-clippy", allow(use_self))]
 
@@ -12,7 +11,6 @@ extern crate byteorder;
 extern crate failure;
 extern crate idna;
 extern crate rmp;
-extern crate test;
 
 /// Macros used globally across pepbut.
 #[macro_use]

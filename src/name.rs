@@ -269,9 +269,8 @@ impl From<Ipv6Addr> for Name {
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
-    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    use std::net::IpAddr;
     use std::str::FromStr;
-    use test::Bencher;
 
     use name::{label_from_str, Name};
     use wire::ProtocolDecode;
@@ -358,11 +357,6 @@ mod tests {
         );
     }
 
-    #[bench]
-    fn bench_from_ipv4addr(b: &mut Bencher) {
-        b.iter(|| Name::from(Ipv4Addr::new(192, 0, 2, 1)))
-    }
-
     #[test]
     fn from_ipv6addr() {
         assert_eq!(
@@ -372,10 +366,5 @@ mod tests {
             ),
             "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa"
         );
-    }
-
-    #[bench]
-    fn bench_from_ipv6addr(b: &mut Bencher) {
-        b.iter(|| Name::from(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)))
     }
 }

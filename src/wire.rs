@@ -173,8 +173,6 @@ impl QueryMessage {
 
 #[cfg(test)]
 mod tests {
-    use test::Bencher;
-
     use name::Name;
     use std::str::FromStr;
     use wire::QueryMessage;
@@ -192,15 +190,5 @@ mod tests {
                 record_type: 1,
             }
         );
-    }
-
-    #[bench]
-    fn bench_decode(b: &mut Bencher) {
-        b.iter(|| {
-            QueryMessage::decode(&[
-                0x86, 0x2a, 0x01, 0x20, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x67,
-                0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x03, 0x63, 0x6f, 0x6d, 0x00, 0x00, 0x01, 0x00, 0x01,
-            ]).unwrap()
-        })
     }
 }

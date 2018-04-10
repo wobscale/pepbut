@@ -229,7 +229,6 @@ impl<'a> LookupResult<'a> {
 mod tests {
     use std::io::Cursor;
     use std::str::FromStr;
-    use test::Bencher;
 
     use name::Name;
     use record::{RData, Record};
@@ -303,21 +302,13 @@ mod tests {
         )
     }
 
-    #[bench]
-    fn bench_read_example_invalid(b: &mut Bencher) {
-        b.iter(|| {
-            let buf: &[u8] = include_bytes!("../tests/data/example.invalid.zone");
-            Zone::read_from(&mut Cursor::new(buf)).unwrap();
-        });
-    }
-
-    #[bench]
-    fn bench_write_example_invalid(b: &mut Bencher) {
-        let zone = zone_example_invalid();
-        b.iter(|| {
-            let mut buf = Vec::new();
-            zone.write_to(&mut buf).unwrap();
-        });
+    #[test]
+    fn read_example_invalid() {
+        let buf: &[u8] = include_bytes!("../tests/data/example.invalid.zone");
+        assert_eq!(
+            Zone::read_from(&mut Cursor::new(buf)).unwrap(),
+            zone_example_invalid()
+        );
     }
 
     #[test]
