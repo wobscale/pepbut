@@ -9,6 +9,7 @@ use idna::uts46;
 use rmp;
 use std::fmt;
 use std::io::{Cursor, Read, Write};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::rc::Rc;
 use std::str::{self, FromStr};
 
@@ -215,10 +216,62 @@ impl ProtocolDecode for Name {
     }
 }
 
+thread_local! {
+    static LABEL_ARPA: Rc<[u8]> = Rc::from(*b"arpa");
+    static LABEL_IN_ADDR: Rc<[u8]> = Rc::from(*b"in-addr");
+    static LABEL_IP6: Rc<[u8]> = Rc::from(*b"ip6");
+}
+
+impl From<IpAddr> for Name {
+    fn from(addr: IpAddr) -> Name {
+        match addr {
+            IpAddr::V4(a) => a.into(),
+            IpAddr::V6(a) => a.into(),
+        }
+    }
+}
+
+impl From<Ipv4Addr> for Name {
+    fn from(addr: Ipv4Addr) -> Name {
+        LABEL_ARPA.with(|arpa| {
+            LABEL_IN_ADDR.with(|in_addr| {
+                let mut name = Vec::with_capacity(6);
+                let octets = addr.octets();
+                for i in 0..4 {
+                    name.push(Rc::from(format!("{}", octets[3 - i]).as_bytes()));
+                }
+                name.push(in_addr.clone());
+                name.push(arpa.clone());
+                Name(name)
+            })
+        })
+    }
+}
+
+impl From<Ipv6Addr> for Name {
+    fn from(addr: Ipv6Addr) -> Name {
+        LABEL_ARPA.with(|arpa| {
+            LABEL_IP6.with(|ip6| {
+                let mut name = Vec::with_capacity(34);
+                let octets = addr.octets();
+                for i in 0..16 {
+                    name.push(Rc::from(format!("{:x}", octets[15 - i] & 0xf).as_bytes()));
+                    name.push(Rc::from(format!("{:x}", octets[15 - i] >> 4).as_bytes()));
+                }
+                name.push(ip6.clone());
+                name.push(arpa.clone());
+                Name(name)
+            })
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
     use std::str::FromStr;
+    use test::Bencher;
 
     use name::{label_from_str, Name};
     use wire::ProtocolDecode;
@@ -295,5 +348,34 @@ mod tests {
     fn decode_infinite() {
         let mut buf = Cursor::new(b"\xc0\x00");
         assert!(Name::decode(&mut buf).is_err());
+    }
+
+    #[test]
+    fn from_ipv4addr() {
+        assert_eq!(
+            format!("{}", Name::from(IpAddr::V4([192, 0, 2, 1].into()))),
+            "1.2.0.192.in-addr.arpa"
+        );
+    }
+
+    #[bench]
+    fn bench_from_ipv4addr(b: &mut Bencher) {
+        b.iter(|| Name::from(Ipv4Addr::new(192, 0, 2, 1)))
+    }
+
+    #[test]
+    fn from_ipv6addr() {
+        assert_eq!(
+            format!(
+                "{}",
+                Name::from(IpAddr::V6([0x2001, 0xdb8, 0, 0, 0, 0, 0, 1].into()))
+            ),
+            "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa"
+        );
+    }
+
+    #[bench]
+    fn bench_from_ipv6addr(b: &mut Bencher) {
+        b.iter(|| Name::from(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)))
     }
 }
