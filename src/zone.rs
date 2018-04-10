@@ -355,6 +355,13 @@ mod tests {
     }
 
     #[test]
+    fn zone_empty() {
+        let zone = zone_example_invalid();
+        assert_eq!(zone.is_empty(), false);
+        assert_eq!(Zone::new(zone.origin.clone(), 1234567890).is_empty(), true);
+    }
+
+    #[test]
     fn len_example_invalid() {
         assert_eq!(zone_example_invalid().len(), 9);
     }

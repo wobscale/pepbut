@@ -299,6 +299,14 @@ mod tests {
     }
 
     #[test]
+    fn too_long() {
+        assert!(
+            Name::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                .is_err()
+        );
+    }
+
+    #[test]
     fn from_str() {
         assert_eq!(
             Name::from_str("buttslol.net.").unwrap(),
