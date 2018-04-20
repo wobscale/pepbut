@@ -6,8 +6,8 @@ use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::rc::Rc;
 
-use Msgpack;
 use name::Name;
+use Msgpack;
 
 #[cfg_attr(feature = "cargo-clippy", allow(stutter))]
 pub trait RecordTrait {

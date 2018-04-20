@@ -13,8 +13,8 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::rc::Rc;
 use std::str::{self, FromStr};
 
-use Msgpack;
 use wire::{ProtocolDecode, ProtocolDecodeError};
+use Msgpack;
 
 /// Errors that can occur while parsing a `Name`.
 #[derive(Debug, Fail)]
@@ -276,7 +276,7 @@ mod tests {
     use wire::ProtocolDecode;
 
     macro_rules! label {
-        ($e: expr) => {
+        ($e:expr) => {
             label_from_str($e).unwrap()
         };
     }

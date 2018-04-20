@@ -5,9 +5,9 @@ use rmp::{self, Marker};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom, Write};
 
-use Msgpack;
 use name::{self, Name};
 use record::{Record, RecordTrait};
+use Msgpack;
 
 /// A zone is a collection of records belonging to an origin.
 #[derive(Debug, Clone, PartialEq)]
@@ -235,7 +235,7 @@ mod tests {
     use zone::{LookupResult, SOARecord, Zone};
 
     macro_rules! r {
-        ($name: expr, $struct: expr) => {
+        ($name:expr, $struct:expr) => {
             Record {
                 name: $name,
                 ttl: 300,
@@ -252,7 +252,7 @@ mod tests {
                 origin.clone()
             };
 
-            ($name: expr) => {{
+            ($name:expr) => {{
                 let mut n = Name::from_str($name).unwrap();
                 n.extend(&origin);
                 n
@@ -384,13 +384,11 @@ mod tests {
         let zone = zone_example_invalid();
         assert_eq!(
             zone.lookup(&Name::from_str("www.example.invalid").unwrap(), 1),
-            LookupResult::Records(&vec![
-                Record::new(
-                    Name::from_str("www.example.invalid").unwrap(),
-                    300,
-                    RData::A([192, 0, 2, 1].into()),
-                ),
-            ])
+            LookupResult::Records(&vec![Record::new(
+                Name::from_str("www.example.invalid").unwrap(),
+                300,
+                RData::A([192, 0, 2, 1].into()),
+            )])
         );
     }
 

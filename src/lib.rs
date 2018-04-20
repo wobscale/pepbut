@@ -16,7 +16,7 @@ extern crate rmp;
 #[macro_use]
 mod macros {
     macro_rules! read_exact {
-        ($r: expr, $c: expr) => {{
+        ($r:expr, $c:expr) => {{
             #[allow(unused_imports)]
             use std::io::Read;
 
