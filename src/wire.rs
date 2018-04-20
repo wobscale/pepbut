@@ -1,7 +1,8 @@
 //! DNS wire message encoding and decoding.
 
-use byteorder::{BigEndian, ReadBytesExt};
-use std::io::{Cursor, Seek, SeekFrom};
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use std::collections::HashMap;
+use std::io::{self, Cursor, Seek, SeekFrom};
 
 use name::Name;
 
@@ -20,6 +21,49 @@ impl ProtocolDecode for u8 {
 impl ProtocolDecode for u16 {
     fn decode<T: AsRef<[u8]>>(buf: &mut Cursor<T>) -> Result<Self, ProtocolDecodeError> {
         Ok(buf.read_u16::<BigEndian>()?)
+    }
+}
+
+#[derive(Debug)]
+pub struct ResponseBuffer {
+    pub(crate) writer: Cursor<Vec<u8>>,
+    pub(crate) names: HashMap<Name, u16>,
+}
+
+impl ResponseBuffer {
+    pub fn new() -> ResponseBuffer {
+        ResponseBuffer {
+            writer: Cursor::new(Vec::new()),
+            names: HashMap::new(),
+        }
+    }
+}
+
+impl Default for ResponseBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PartialEq for ResponseBuffer {
+    fn eq(&self, rhs: &ResponseBuffer) -> bool {
+        self.writer.get_ref() == rhs.writer.get_ref() && self.names == rhs.names
+    }
+}
+
+pub trait ProtocolEncode {
+    fn encode(&self, buf: &mut ResponseBuffer) -> io::Result<()>;
+}
+
+impl ProtocolEncode for u8 {
+    fn encode(&self, buf: &mut ResponseBuffer) -> io::Result<()> {
+        buf.writer.write_u8(*self)
+    }
+}
+
+impl ProtocolEncode for u16 {
+    fn encode(&self, buf: &mut ResponseBuffer) -> io::Result<()> {
+        buf.writer.write_u16::<BigEndian>(*self)
     }
 }
 

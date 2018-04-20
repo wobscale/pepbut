@@ -22,3 +22,4 @@ rmp = "0.8"
 
 [dev-dependencies]
 criterion = "0.2"
+maplit = "1.0"

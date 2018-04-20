@@ -2,11 +2,12 @@
 
 use failure;
 use rmp;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::rc::Rc;
 
 use name::Name;
+use wire::{ProtocolEncode, ResponseBuffer};
 use Msgpack;
 
 #[cfg_attr(feature = "cargo-clippy", allow(stutter))]
@@ -259,5 +260,42 @@ impl Msgpack for RData {
         }
 
         Ok(())
+    }
+}
+
+impl ProtocolEncode for RData {
+    fn encode(&self, buf: &mut ResponseBuffer) -> io::Result<()> {
+        match *self {
+            RData::A(addr) => buf.writer.write_all(&addr.octets()),
+            RData::AAAA(addr) => buf.writer.write_all(&addr.octets()),
+            RData::CNAME(ref name) | RData::NS(ref name) => name.encode(buf),
+            RData::MX {
+                preference,
+                ref exchange,
+            } => {
+                preference.encode(buf)?;
+                exchange.encode(buf)
+            }
+            RData::PTR(addr) => Name::from(addr).encode(buf),
+            RData::SRV {
+                priority,
+                weight,
+                port,
+                ref target,
+            } => {
+                priority.encode(buf)?;
+                weight.encode(buf)?;
+                port.encode(buf)?;
+                target.encode(buf)
+            }
+            RData::TXT(ref s) => {
+                for chunk in s.as_bytes().chunks(255) {
+                    #[cfg_attr(feature = "cargo-clippy", allow(cast_possible_truncation))]
+                    (chunk.len() as u8).encode(buf)?;
+                    buf.writer.write_all(chunk)?;
+                }
+                Ok(())
+            }
+        }
     }
 }

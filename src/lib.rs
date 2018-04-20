@@ -10,6 +10,9 @@ extern crate byteorder;
 #[macro_use]
 extern crate failure;
 extern crate idna;
+#[cfg(test)]
+#[macro_use]
+extern crate maplit;
 extern crate rmp;
 
 /// Macros used globally across pepbut.

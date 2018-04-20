@@ -8,12 +8,12 @@ use failure;
 use idna::uts46;
 use rmp;
 use std::fmt;
-use std::io::{Cursor, Read, Write};
+use std::io::{self, Cursor, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::rc::Rc;
 use std::str::{self, FromStr};
 
-use wire::{ProtocolDecode, ProtocolDecodeError};
+use wire::{ProtocolDecode, ProtocolDecodeError, ProtocolEncode, ResponseBuffer};
 use Msgpack;
 
 /// Errors that can occur while parsing a `Name`.
@@ -97,6 +97,10 @@ impl Name {
     /// Clones and appends all labels in an origin `Name` to this `Name`.
     pub fn extend(&mut self, origin: &Name) {
         self.0.extend(origin.0.iter().cloned())
+    }
+
+    pub fn pop(&self) -> Name {
+        Name(self.0.iter().skip(1).cloned().collect())
     }
 }
 
@@ -207,6 +211,30 @@ impl ProtocolDecode for Name {
     }
 }
 
+impl ProtocolEncode for Name {
+    fn encode(&self, buf: &mut ResponseBuffer) -> io::Result<()> {
+        let mut name = self.clone();
+        while !name.0.is_empty() {
+            let maybe_pos = buf.names.get(&name).cloned();
+            if let Some(pos) = maybe_pos {
+                return (0xc000_u16 + pos).encode(buf);
+            } else {
+                #[cfg_attr(feature = "cargo-clippy", allow(cast_possible_truncation))]
+                buf.names.insert(name.clone(), buf.writer.position() as u16);
+                let label = name.0
+                    .first()
+                    .expect("unreachable, we already checked name is not empty")
+                    .clone();
+                #[cfg_attr(feature = "cargo-clippy", allow(cast_possible_truncation))]
+                (label.len() as u8).encode(buf)?;
+                buf.writer.write_all(&label)?;
+                name = name.pop();
+            }
+        }
+        0_u8.encode(buf)
+    }
+}
+
 thread_local! {
     static LABEL_ARPA: Rc<[u8]> = Rc::from(*b"arpa");
     static LABEL_IN_ADDR: Rc<[u8]> = Rc::from(*b"in-addr");
@@ -264,12 +292,21 @@ mod tests {
     use std::str::FromStr;
 
     use name::{label_from_str, Name};
-    use wire::ProtocolDecode;
+    use wire::{ProtocolDecode, ProtocolEncode, ResponseBuffer};
 
     macro_rules! label {
         ($e:expr) => {
             label_from_str($e).unwrap()
         };
+    }
+
+    macro_rules! cursor {
+        ($e:expr) => {{
+            use std::io::{Seek, SeekFrom};
+            let mut c = Cursor::new($e.to_vec());
+            c.seek(SeekFrom::End(0)).unwrap();
+            c
+        }};
     }
 
     #[test]
@@ -282,6 +319,14 @@ mod tests {
         ] {
             assert_eq!(format!("{}", Name::from_str(s).unwrap()), s.to_owned());
         }
+    }
+
+    #[test]
+    fn pop() {
+        assert_eq!(
+            Name::from_str("www.example.net").unwrap().pop(),
+            Name::from_str("example.net").unwrap()
+        );
     }
 
     #[test]
@@ -364,6 +409,50 @@ mod tests {
                 Name::from(IpAddr::V6([0x2001, 0xdb8, 0, 0, 0, 0, 0, 1].into()))
             ),
             "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa"
+        );
+    }
+
+    #[test]
+    fn encode_smoke() {
+        let mut buf = ResponseBuffer::new();
+        Name::from_str("example.com")
+            .unwrap()
+            .encode(&mut buf)
+            .unwrap();
+        assert_eq!(
+            buf,
+            ResponseBuffer {
+                writer: cursor!(b"\x07example\x03com\x00"),
+                names: hashmap! {
+                    Name::from_str("example.com").unwrap() => 0,
+                    Name::from_str("com").unwrap() => 8,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn encode_ns() {
+        let mut buf = ResponseBuffer::new();
+        Name::from_str("ns1.example.com")
+            .unwrap()
+            .encode(&mut buf)
+            .unwrap();
+        Name::from_str("ns2.example.com")
+            .unwrap()
+            .encode(&mut buf)
+            .unwrap();
+        assert_eq!(
+            buf,
+            ResponseBuffer {
+                writer: cursor!(b"\x03ns1\x07example\x03com\x00\x03ns2\xc0\x04"),
+                names: hashmap! {
+                    Name::from_str("ns1.example.com").unwrap() => 0,
+                    Name::from_str("example.com").unwrap() => 4,
+                    Name::from_str("com").unwrap() => 12,
+                    Name::from_str("ns2.example.com").unwrap() => 17,
+                },
+            }
         );
     }
 }
