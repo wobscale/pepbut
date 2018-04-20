@@ -32,10 +32,11 @@ impl Zone {
     }
 
     /// Creates a new zone from an iterator of records.
-    pub fn with_records<I>(origin: Name, serial: u32, records: I) -> Zone
-    where
-        I: IntoIterator<Item = Record>,
-    {
+    pub fn with_records<I: IntoIterator<Item = Record>>(
+        origin: Name,
+        serial: u32,
+        records: I,
+    ) -> Zone {
         let mut zone = Zone::new(origin, serial);
         for record in records {
             zone.push(record);
@@ -116,10 +117,7 @@ impl Zone {
     ///
     /// The reader is required to implement `Seek` due to the need to read the labels at the end of
     /// the zone file first before processing the rest of the zone.
-    pub fn read_from<R>(reader: &mut R) -> Result<Zone, failure::Error>
-    where
-        R: Read + Seek,
-    {
+    pub fn read_from<R: Read + Seek>(reader: &mut R) -> Result<Zone, failure::Error> {
         if rmp::decode::read_array_len(reader)? != 5 {
             bail!("zone must be array of 5 elements");
         }
@@ -153,10 +151,7 @@ impl Zone {
 
     /// Serializes a zone file to a writer in one pass.
     #[cfg_attr(feature = "cargo-clippy", allow(cast_possible_truncation))]
-    pub fn write_to<W>(&self, writer: &mut W) -> Result<(), failure::Error>
-    where
-        W: Write,
-    {
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> Result<(), failure::Error> {
         rmp::encode::write_array_len(writer, 5)?;
         let mut labels = Vec::new();
 

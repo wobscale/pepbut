@@ -34,10 +34,7 @@ impl Record {
 }
 
 impl Msgpack for Record {
-    fn from_msgpack<R>(reader: &mut R, labels: &[Rc<[u8]>]) -> Result<Self, failure::Error>
-    where
-        R: Read,
-    {
+    fn from_msgpack<R: Read>(reader: &mut R, labels: &[Rc<[u8]>]) -> Result<Self, failure::Error> {
         // rdata reads two values
         if rmp::decode::read_array_len(reader)? != 4 {
             bail!("record must be array of 4 elements");
@@ -50,14 +47,11 @@ impl Msgpack for Record {
         Ok(Record { name, ttl, rdata })
     }
 
-    fn to_msgpack<W>(
+    fn to_msgpack<W: Write>(
         &self,
         writer: &mut W,
         labels: &mut Vec<Rc<[u8]>>,
-    ) -> Result<(), failure::Error>
-    where
-        W: Write,
-    {
+    ) -> Result<(), failure::Error> {
         // rdata writes two values
         rmp::encode::write_array_len(writer, 4)?;
 
@@ -140,10 +134,7 @@ impl RData {
 }
 
 impl Msgpack for RData {
-    fn from_msgpack<R>(reader: &mut R, labels: &[Rc<[u8]>]) -> Result<Self, failure::Error>
-    where
-        R: Read,
-    {
+    fn from_msgpack<R: Read>(reader: &mut R, labels: &[Rc<[u8]>]) -> Result<Self, failure::Error> {
         Ok(match rmp::decode::read_int(reader)? {
             // A: addr
             1 => {
@@ -224,14 +215,11 @@ impl Msgpack for RData {
     }
 
     #[cfg_attr(feature = "cargo-clippy", allow(cast_possible_truncation))]
-    fn to_msgpack<W>(
+    fn to_msgpack<W: Write>(
         &self,
         writer: &mut W,
         labels: &mut Vec<Rc<[u8]>>,
-    ) -> Result<(), failure::Error>
-    where
-        W: Write,
-    {
+    ) -> Result<(), failure::Error> {
         rmp::encode::write_uint(writer, self.record_type().into())?;
 
         match *self {

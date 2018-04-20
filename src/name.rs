@@ -138,10 +138,7 @@ impl FromStr for Name {
 }
 
 impl Msgpack for Name {
-    fn from_msgpack<R>(reader: &mut R, labels: &[Rc<[u8]>]) -> Result<Self, failure::Error>
-    where
-        R: Read,
-    {
+    fn from_msgpack<R: Read>(reader: &mut R, labels: &[Rc<[u8]>]) -> Result<Self, failure::Error> {
         let label_len = rmp::decode::read_array_len(reader)? as usize;
         let mut name_labels = Vec::with_capacity(label_len);
         for _ in 0..label_len {
@@ -158,14 +155,11 @@ impl Msgpack for Name {
     }
 
     #[cfg_attr(feature = "cargo-clippy", allow(cast_possible_truncation))]
-    fn to_msgpack<W>(
+    fn to_msgpack<W: Write>(
         &self,
         writer: &mut W,
         labels: &mut Vec<Rc<[u8]>>,
-    ) -> Result<(), failure::Error>
-    where
-        W: Write,
-    {
+    ) -> Result<(), failure::Error> {
         rmp::encode::write_array_len(writer, self.0.len() as u32)?;
 
         for label in &self.0 {
@@ -185,10 +179,7 @@ impl Msgpack for Name {
 }
 
 impl ProtocolDecode for Name {
-    fn decode<T>(buf: &mut Cursor<T>) -> Result<Self, ProtocolDecodeError>
-    where
-        T: AsRef<[u8]>,
-    {
+    fn decode<T: AsRef<[u8]>>(buf: &mut Cursor<T>) -> Result<Self, ProtocolDecodeError> {
         let mut name = Name(Vec::new());
         let mut orig_pos = 0;
         let mut jumps = 0;

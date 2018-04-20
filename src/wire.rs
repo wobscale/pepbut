@@ -6,28 +6,19 @@ use std::io::{Cursor, Seek, SeekFrom};
 use name::Name;
 
 /// Types that implement `ProtocolDecode` can be decoded from a DNS message packet.
-pub trait ProtocolDecode {
+pub trait ProtocolDecode: Sized {
     /// Read this type off the buffer.
-    fn decode<T>(buf: &mut Cursor<T>) -> Result<Self, ProtocolDecodeError>
-    where
-        Self: Sized,
-        T: AsRef<[u8]>;
+    fn decode<T: AsRef<[u8]>>(buf: &mut Cursor<T>) -> Result<Self, ProtocolDecodeError>;
 }
 
 impl ProtocolDecode for u8 {
-    fn decode<T>(buf: &mut Cursor<T>) -> Result<Self, ProtocolDecodeError>
-    where
-        T: AsRef<[u8]>,
-    {
+    fn decode<T: AsRef<[u8]>>(buf: &mut Cursor<T>) -> Result<Self, ProtocolDecodeError> {
         Ok(buf.read_u8()?)
     }
 }
 
 impl ProtocolDecode for u16 {
-    fn decode<T>(buf: &mut Cursor<T>) -> Result<Self, ProtocolDecodeError>
-    where
-        T: AsRef<[u8]>,
-    {
+    fn decode<T: AsRef<[u8]>>(buf: &mut Cursor<T>) -> Result<Self, ProtocolDecodeError> {
         Ok(buf.read_u16::<BigEndian>()?)
     }
 }
