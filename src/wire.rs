@@ -94,7 +94,6 @@ pub enum ProtocolDecodeError {
     UnacceptableHeader,
 }
 
-#[cfg_attr(feature = "cargo-clippy", allow(fallible_impl_from))]
 impl From<::std::io::Error> for ProtocolDecodeError {
     fn from(err: ::std::io::Error) -> Self {
         ProtocolDecodeError::IOError(err)
@@ -113,7 +112,6 @@ pub enum ProtocolEncodeError {
     CastError(::cast::Error),
 }
 
-// #[cfg_attr(feature = "cargo-clippy", allow(fallible_impl_from))]
 impl From<::std::io::Error> for ProtocolEncodeError {
     fn from(err: ::std::io::Error) -> Self {
         ProtocolEncodeError::IOError(err)

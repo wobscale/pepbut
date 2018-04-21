@@ -1,6 +1,6 @@
 //! Serialization and deserialization of zone files.
 
-use cast::u32;
+use cast::{i64, u32};
 use failure;
 use rmp::{self, Marker};
 use std::collections::HashMap;
@@ -126,8 +126,7 @@ impl Zone {
         reader.seek(SeekFrom::End(-9))?;
         let label_offset = rmp::decode::read_u64(reader)?;
 
-        #[cfg_attr(feature = "cargo-clippy", allow(cast_possible_wrap))]
-        reader.seek(SeekFrom::End(-(label_offset as i64)))?;
+        reader.seek(SeekFrom::End(-i64(label_offset)?))?;
         let label_len = rmp::decode::read_array_len(reader)? as usize;
         let mut labels = Vec::with_capacity(label_len);
         for _ in 0..label_len {
