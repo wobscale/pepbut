@@ -1,13 +1,15 @@
 //! Serialization and deserialization of zone files.
 
-use cast::{i64, u32};
+use cast::{self, i64, u32};
 use failure;
 use rmp::{self, Marker};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::str::FromStr;
 
 use name::{self, Name};
 use record::{Record, RecordTrait};
+use wire::{ProtocolEncode, ProtocolEncodeError, ResponseBuffer};
 use Msgpack;
 
 /// A zone is a collection of records belonging to an origin.
@@ -109,8 +111,8 @@ impl Zone {
 
     pub fn soa_record(&self) -> SOARecord {
         SOARecord {
-            origin: &self.origin,
-            serial: &self.serial,
+            origin: self.origin.clone(),
+            serial: self.serial,
         }
     }
 
@@ -183,14 +185,47 @@ impl Zone {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct SOARecord<'a> {
-    origin: &'a Name,
-    serial: &'a u32,
+pub struct SOARecord {
+    origin: Name,
+    serial: u32,
 }
 
-impl<'a> RecordTrait for SOARecord<'a> {
+impl SOARecord {
+    fn mname(&self) -> Name {
+        Name::from_str("ns1.wob.zone").expect("cannot fail")
+    }
+
+    fn rname(&self) -> Name {
+        Name::from_str("hostmistress.as64241.net").expect("cannot fail")
+    }
+}
+
+impl RecordTrait for SOARecord {
+    fn name(&self) -> &Name {
+        &self.origin
+    }
+
     fn record_type(&self) -> u16 {
         6
+    }
+
+    fn ttl(&self) -> u32 {
+        3600
+    }
+
+    fn encode_rdata_len(&self, buf: &ResponseBuffer) -> Result<u16, cast::Error> {
+        let (mname_len, names) = self.mname().encode_len(&buf.names())?;
+        Ok(mname_len + self.rname().encode_len(&names)?.0 + 20)
+    }
+
+    fn encode_rdata(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError> {
+        self.mname().encode(buf)?;
+        self.rname().encode(buf)?;
+        self.serial.encode(buf)?;
+        10000_u32.encode(buf)?;
+        2400_u32.encode(buf)?;
+        604_800_u32.encode(buf)?;
+        3600_u32.encode(buf)
     }
 }
 
@@ -198,23 +233,54 @@ impl<'a> RecordTrait for SOARecord<'a> {
 #[derive(Debug, PartialEq)]
 pub enum LookupResult<'a> {
     /// Records of that name and type exist. The value is a reference to the `Vec<Record>` for that
-    /// name and type.
+    /// name and type. NOERROR is set and the records go to the ANSWER section.
     Records(&'a Vec<Record>),
-    /// Records of that name exist, but not of that type. NXDOMAIN must not be set. The value is
-    /// the SOA record that must be included in the response.
-    NameExists(SOARecord<'a>),
-    /// No records of that name exist. NXDOMAIN must be set. The value is the SOA record that must
-    /// be included in the response.
-    NoName(SOARecord<'a>),
+    /// The name belongs to a zone delegated to another name server. NOERROR is set; the
+    /// authorities go to the AUTHORITY section and the glue records go to the ADDITIONAL section.
+    Delegated {
+        authorities: &'a Vec<Record>,
+        glue_records: Vec<Record>,
+    },
+    /// Records of that name exist, but not of that type. NOERROR is set and the SOA record goes to
+    /// the AUTHORITY section.
+    NameExists(SOARecord),
+    /// No records of that name exist, and we are authoritative for this zone. NXDOMAIN is set and
+    /// the SOA record goes to the AUTHORITY section.
+    NoName(SOARecord),
+    /// We have no record of this zone. REFUSED is set. No records go to any sections.
+    NoZone,
 }
 
 impl<'a> LookupResult<'a> {
-    /// Returns `true` if the lookup contains no records.
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn authoritative(&self) -> bool {
         match *self {
-            // v should never be empty here but worth checking anyway
-            LookupResult::Records(v) => v.is_empty(),
-            LookupResult::NameExists(_) | LookupResult::NoName(_) => true,
+            LookupResult::Records(_)
+            | LookupResult::Delegated { .. }
+            | LookupResult::NameExists(_)
+            | LookupResult::NoName(_) => true,
+            LookupResult::NoZone => false,
+        }
+    }
+
+    pub(crate) fn rcode(&self) -> u8 {
+        match *self {
+            LookupResult::Records(_)
+            | LookupResult::Delegated { .. }
+            | LookupResult::NameExists(_) => 0,
+            LookupResult::NoName(_) => 3,
+            LookupResult::NoZone => 5,
+        }
+    }
+
+    pub(crate) fn counts(&self) -> [usize; 3] {
+        match *self {
+            LookupResult::Records(v) => [v.len(), 0, 0],
+            LookupResult::Delegated {
+                ref authorities,
+                ref glue_records,
+            } => [0, authorities.len(), glue_records.len()],
+            LookupResult::NameExists(_) | LookupResult::NoName(_) => [0, 1, 0],
+            LookupResult::NoZone => [0, 0, 0],
         }
     }
 }
@@ -227,6 +293,23 @@ mod tests {
     use name::Name;
     use record::{RData, Record};
     use zone::{LookupResult, SOARecord, Zone};
+
+    impl<'a> LookupResult<'a> {
+        /// Returns `true` if the lookup contains no records other than the SOA record.
+        fn is_empty(&self) -> bool {
+            match *self {
+                LookupResult::Records(v) | LookupResult::Delegated { authorities: v, .. } => {
+                    if v.is_empty() {
+                        panic!("variant cannot be empty");
+                    }
+                    false
+                }
+                LookupResult::NameExists(_) | LookupResult::NoName(_) | LookupResult::NoZone => {
+                    true
+                }
+            }
+        }
+    }
 
     macro_rules! r {
         ($name:expr, $struct:expr) => {
@@ -321,8 +404,8 @@ mod tests {
         assert_eq!(
             zone_example_invalid().soa_record(),
             SOARecord {
-                origin: &Name::from_str("example.invalid.").unwrap(),
-                serial: &1234567890,
+                origin: Name::from_str("example.invalid.").unwrap(),
+                serial: 1234567890,
             }
         );
     }

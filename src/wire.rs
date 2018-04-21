@@ -1,10 +1,13 @@
 //! DNS wire message encoding and decoding.
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use std::collections::HashMap;
+use cast::u16;
+use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Seek, SeekFrom};
 
 use name::Name;
+use record::RecordTrait;
+use zone::LookupResult;
 
 /// Types that implement `ProtocolDecode` can be decoded from a DNS message packet.
 pub trait ProtocolDecode: Sized {
@@ -24,6 +27,12 @@ impl ProtocolDecode for u16 {
     }
 }
 
+impl ProtocolDecode for u32 {
+    fn decode(buf: &mut Cursor<impl AsRef<[u8]>>) -> Result<u32, ProtocolDecodeError> {
+        Ok(buf.read_u32::<BigEndian>()?)
+    }
+}
+
 #[derive(Debug)]
 pub struct ResponseBuffer {
     pub(crate) writer: Cursor<Vec<u8>>,
@@ -36,6 +45,10 @@ impl ResponseBuffer {
             writer: Cursor::new(Vec::new()),
             names: HashMap::new(),
         }
+    }
+
+    pub(crate) fn names(&self) -> HashSet<Name> {
+        self.names.keys().cloned().collect()
     }
 }
 
@@ -65,6 +78,14 @@ impl ProtocolEncode for u16 {
     fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError> {
         buf.writer
             .write_u16::<BigEndian>(*self)
+            .map_err(|e| e.into())
+    }
+}
+
+impl ProtocolEncode for u32 {
+    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError> {
+        buf.writer
+            .write_u32::<BigEndian>(*self)
             .map_err(|e| e.into())
     }
 }
@@ -130,11 +151,11 @@ impl From<::cast::Error> for ProtocolEncodeError {
 pub struct QueryMessage {
     /// A random identifier. Response packets must reply with the same `id`. Due to UDP being
     /// stateless, this is needed to prevent confusing responses with each other.
-    pub id: u16,
+    id: u16,
     /// The name being queried.
-    pub name: Name,
+    name: Name,
     /// The record type being queried.
-    pub record_type: u16,
+    record_type: u16,
 }
 
 impl QueryMessage {
@@ -229,13 +250,89 @@ impl QueryMessage {
             record_type,
         })
     }
+
+    /// Creates a [`ResponseMessage`] given a [`LookupResult`].
+    pub fn respond(self, answer: LookupResult) -> ResponseMessage {
+        ResponseMessage {
+            query: self,
+            answer,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ResponseMessage<'a> {
+    query: QueryMessage,
+    answer: LookupResult<'a>,
+}
+
+impl<'a> ProtocolEncode for ResponseMessage<'a> {
+    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError> {
+        // ID
+        self.query.id.encode(buf)?;
+
+        // +--+--+--+--+--+--+--+--+
+        // |QR|   Opcode  |AA|TC|RD|
+        // +--+--+--+--+--+--+--+--+
+        (if self.answer.authoritative() {
+            0b1000_0100_u8
+        } else {
+            0b1000_0000_u8
+        }).encode(buf)?;
+
+        // +--+--+--+--+--+--+--+--+
+        // |RA|   Z    |   RCODE   |
+        // +--+--+--+--+--+--+--+--+
+        self.answer.rcode().encode(buf)?;
+
+        // QDCOUNT
+        1_u16.encode(buf)?;
+        // ANCOUNT, NSCOUNT, ARCOUNT
+        for x in &self.answer.counts() {
+            u16(*x)?.encode(buf)?;
+        }
+
+        // Question section
+        self.query.name.encode(buf)?;
+        self.query.record_type.encode(buf)?;
+        1_u16.encode(buf)?;
+
+        // Answer, authority, and additional sections
+        macro_rules! encode_vec {
+            ($v:expr) => {
+                $v.iter()
+                    .map(|record| (record as &RecordTrait).encode(buf))
+                    .collect::<Result<Vec<()>, _>>()
+                    .map(|_| ())
+            };
+        }
+        match self.answer {
+            LookupResult::Records(v) => encode_vec!(v)?,
+            LookupResult::Delegated {
+                authorities,
+                ref glue_records,
+            } => {
+                encode_vec!(authorities)?;
+                encode_vec!(glue_records)?;
+            }
+            LookupResult::NameExists(ref soa) | LookupResult::NoName(ref soa) => {
+                (soa as &RecordTrait).encode(buf)?
+            }
+            LookupResult::NoZone => {}
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use name::Name;
     use std::str::FromStr;
-    use wire::QueryMessage;
+
+    use name::Name;
+    use record::{RData, Record};
+    use wire::{ProtocolEncode, QueryMessage, ResponseBuffer, ResponseMessage};
+    use zone::LookupResult;
 
     #[test]
     fn decode_query() {
@@ -249,6 +346,33 @@ mod tests {
                 name: Name::from_str("google.com").unwrap(),
                 record_type: 1,
             }
+        );
+    }
+
+    #[test]
+    fn encode_response() {
+        let mut buf = ResponseBuffer::new();
+        ResponseMessage {
+            query: QueryMessage {
+                id: 0x862a,
+                name: Name::from_str("google.com").unwrap(),
+                record_type: 1,
+            },
+            answer: LookupResult::Records(&vec![Record {
+                name: Name::from_str("google.com").unwrap(),
+                ttl: 293,
+                rdata: RData::A([216, 58, 211, 142].into()),
+            }]),
+        }.encode(&mut buf)
+            .unwrap();
+        assert_eq!(
+            vec![
+                0x86, 0x2a, 0x84, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x06, 0x67,
+                0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x03, 0x63, 0x6f, 0x6d, 0x00, 0x00, 0x01, 0x00, 0x01,
+                0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x01, 0x25, 0x00, 0x04, 0xd8, 0x3a,
+                0xd3, 0x8e,
+            ],
+            buf.writer.into_inner(),
         );
     }
 }

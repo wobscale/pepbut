@@ -1,8 +1,9 @@
 //! Records and record data.
 
-use cast::{u32, u8};
+use cast::{self, u16, u32, u8};
 use failure;
 use rmp;
+use std::cmp::min;
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::rc::Rc;
@@ -12,9 +13,32 @@ use wire::{ProtocolEncode, ProtocolEncodeError, ResponseBuffer};
 use Msgpack;
 
 #[cfg_attr(feature = "cargo-clippy", allow(stutter))]
-pub trait RecordTrait {
+pub(crate) trait RecordTrait {
+    /// The name the record belongs to.
+    fn name(&self) -> &Name;
+
     /// The resource record type.
     fn record_type(&self) -> u16;
+
+    /// The TTL of the record.
+    fn ttl(&self) -> u32;
+
+    /// Returns the length of the encoded rdata.
+    fn encode_rdata_len(&self, buf: &ResponseBuffer) -> Result<u16, cast::Error>;
+
+    /// Encodes the rdata to a buffer.
+    fn encode_rdata(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError>;
+}
+
+impl ProtocolEncode for RecordTrait {
+    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError> {
+        self.name().encode(buf)?;
+        self.record_type().encode(buf)?;
+        1_u16.encode(buf)?; // IN class
+        self.ttl().encode(buf)?;
+        self.encode_rdata_len(buf)?.encode(buf)?;
+        self.encode_rdata(buf)
+    }
 }
 
 /// A record maps an owner domain name to a record data value, associated with a time-to-live.
@@ -32,6 +56,28 @@ impl Record {
     /// Create a record from rdata.
     pub fn new(name: Name, ttl: u32, rdata: RData) -> Record {
         Record { name, ttl, rdata }
+    }
+}
+
+impl RecordTrait for Record {
+    fn name(&self) -> &Name {
+        &self.name
+    }
+
+    fn record_type(&self) -> u16 {
+        self.rdata.record_type()
+    }
+
+    fn ttl(&self) -> u32 {
+        self.ttl
+    }
+
+    fn encode_rdata_len(&self, buf: &ResponseBuffer) -> Result<u16, cast::Error> {
+        self.rdata.encode_len(buf)
+    }
+
+    fn encode_rdata(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError> {
+        self.rdata.encode(buf)
     }
 }
 
@@ -62,12 +108,6 @@ impl Msgpack for Record {
         self.rdata.to_msgpack(writer, labels)?;
 
         Ok(())
-    }
-}
-
-impl RecordTrait for Record {
-    fn record_type(&self) -> u16 {
-        self.rdata.record_type()
     }
 }
 
@@ -132,6 +172,21 @@ impl RData {
             RData::SRV { .. } => 33,
             RData::TXT { .. } => 16,
         }
+    }
+
+    fn encode_len(&self, buf: &ResponseBuffer) -> Result<u16, cast::Error> {
+        Ok(match *self {
+            RData::A { .. } => 4,
+            RData::AAAA { .. } => 16,
+            RData::CNAME(ref name) | RData::NS(ref name) => name.encode_len(&buf.names())?.0,
+            RData::MX { ref exchange, .. } => 2 + exchange.encode_len(&buf.names())?.0,
+            RData::PTR(addr) => Name::from(addr).encode_len(&buf.names())?.0,
+            RData::SRV { ref target, .. } => 6 + target.encode_len(&buf.names())?.0,
+            RData::TXT(ref s) => {
+                let l = s.len();
+                u16((l / 255 + min(1, l % 255)) + l)?
+            }
+        })
     }
 }
 

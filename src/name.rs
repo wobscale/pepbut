@@ -4,10 +4,11 @@
 // derived, we can't apply this cfg_attr to only that struct.
 #![cfg_attr(feature = "cargo-clippy", allow(use_debug))]
 
-use cast::{u16, u32, u8};
+use cast::{self, u16, u32, u8};
 use failure;
 use idna::uts46;
 use rmp;
+use std::collections::HashSet;
 use std::fmt;
 use std::io::{Cursor, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -103,6 +104,28 @@ impl Name {
 
     pub fn pop(&self) -> Name {
         Name(self.0.iter().skip(1).cloned().collect())
+    }
+
+    pub(crate) fn encode_len(
+        &self,
+        names: &HashSet<Name>,
+    ) -> Result<(u16, HashSet<Name>), cast::Error> {
+        let mut names = names.clone();
+        let mut name = self.clone();
+        let mut len = 0;
+        while !name.0.is_empty() {
+            if names.contains(&name) {
+                return Ok((len + 2, names));
+            } else {
+                names.insert(name.clone());
+                len += 1 + u16(name.0
+                    .first()
+                    .expect("unreachable, we already checked name is not empty")
+                    .len())?;
+                name = name.pop();
+            }
+        }
+        Ok((len, names))
     }
 }
 
