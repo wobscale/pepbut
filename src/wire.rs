@@ -2,7 +2,7 @@
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::collections::HashMap;
-use std::io::{self, Cursor, Seek, SeekFrom};
+use std::io::{Cursor, Seek, SeekFrom};
 
 use name::Name;
 
@@ -52,18 +52,20 @@ impl PartialEq for ResponseBuffer {
 }
 
 pub trait ProtocolEncode {
-    fn encode(&self, buf: &mut ResponseBuffer) -> io::Result<()>;
+    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError>;
 }
 
 impl ProtocolEncode for u8 {
-    fn encode(&self, buf: &mut ResponseBuffer) -> io::Result<()> {
-        buf.writer.write_u8(*self)
+    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError> {
+        buf.writer.write_u8(*self).map_err(|e| e.into())
     }
 }
 
 impl ProtocolEncode for u16 {
-    fn encode(&self, buf: &mut ResponseBuffer) -> io::Result<()> {
-        buf.writer.write_u16::<BigEndian>(*self)
+    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError> {
+        buf.writer
+            .write_u16::<BigEndian>(*self)
+            .map_err(|e| e.into())
     }
 }
 
@@ -96,6 +98,31 @@ pub enum ProtocolDecodeError {
 impl From<::std::io::Error> for ProtocolDecodeError {
     fn from(err: ::std::io::Error) -> Self {
         ProtocolDecodeError::IOError(err)
+    }
+}
+
+/// The various types of errors that can occur when attempting to encode a protocol message to the
+/// wire.
+#[derive(Debug, Fail)]
+pub enum ProtocolEncodeError {
+    /// Generic IO error.
+    #[fail(display = "IO error: {}", _0)]
+    IOError(::std::io::Error),
+    /// Value cast error.
+    #[fail(display = "cast error: {}", _0)]
+    CastError(::cast::Error),
+}
+
+// #[cfg_attr(feature = "cargo-clippy", allow(fallible_impl_from))]
+impl From<::std::io::Error> for ProtocolEncodeError {
+    fn from(err: ::std::io::Error) -> Self {
+        ProtocolEncodeError::IOError(err)
+    }
+}
+
+impl From<::cast::Error> for ProtocolEncodeError {
+    fn from(err: ::cast::Error) -> Self {
+        ProtocolEncodeError::CastError(err)
     }
 }
 

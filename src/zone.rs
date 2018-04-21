@@ -1,5 +1,6 @@
 //! Serialization and deserialization of zone files.
 
+use cast::u32;
 use failure;
 use rmp::{self, Marker};
 use std::collections::HashMap;
@@ -150,7 +151,6 @@ impl Zone {
     }
 
     /// Serializes a zone file to a writer in one pass.
-    #[cfg_attr(feature = "cargo-clippy", allow(cast_possible_truncation))]
     pub fn write_to<W: Write>(&self, writer: &mut W) -> Result<(), failure::Error> {
         rmp::encode::write_array_len(writer, 5)?;
         let mut labels = Vec::new();
@@ -159,20 +159,20 @@ impl Zone {
 
         rmp::encode::write_uint(writer, self.serial.into())?;
 
-        rmp::encode::write_array_len(writer, self.len() as u32)?;
+        rmp::encode::write_array_len(writer, u32(self.len())?)?;
         for record in self.iter() {
             record.to_msgpack(writer, &mut labels)?;
         }
 
-        let mut bytes_written: u64 =
-            match rmp::encode::write_array_len(writer, labels.len() as u32)? {
-                Marker::FixArray(_) => 1,
-                Marker::Array16 => 3,
-                Marker::Array32 => 5,
-                _ => unreachable!(),
-            };
+        let mut bytes_written: u64 = match rmp::encode::write_array_len(writer, u32(labels.len())?)?
+        {
+            Marker::FixArray(_) => 1,
+            Marker::Array16 => 3,
+            Marker::Array32 => 5,
+            _ => unreachable!(),
+        };
         for label in labels {
-            rmp::encode::write_str_len(writer, label.len() as u32)?;
+            rmp::encode::write_str_len(writer, u32(label.len())?)?;
             writer.write_all(&label)?;
             bytes_written += label.len() as u64 + if label.len() < 32 { 1 } else { 2 };
         }

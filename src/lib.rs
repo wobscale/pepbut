@@ -7,6 +7,7 @@
 #![cfg_attr(feature = "cargo-clippy", allow(use_self))]
 
 extern crate byteorder;
+extern crate cast;
 #[macro_use]
 extern crate failure;
 extern crate idna;

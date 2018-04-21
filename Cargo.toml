@@ -16,6 +16,7 @@ lto = true
 
 [dependencies]
 byteorder = "1.2"
+cast = "0.2"
 failure = "0.1"
 idna = "0.1"
 rmp = "0.8"

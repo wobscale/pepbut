@@ -4,16 +4,18 @@
 // derived, we can't apply this cfg_attr to only that struct.
 #![cfg_attr(feature = "cargo-clippy", allow(use_debug))]
 
+use cast::{u16, u32, u8};
 use failure;
 use idna::uts46;
 use rmp;
 use std::fmt;
-use std::io::{self, Cursor, Read, Write};
+use std::io::{Cursor, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::rc::Rc;
 use std::str::{self, FromStr};
 
-use wire::{ProtocolDecode, ProtocolDecodeError, ProtocolEncode, ResponseBuffer};
+use wire::{ProtocolDecode, ProtocolDecodeError, ProtocolEncode, ProtocolEncodeError,
+           ResponseBuffer};
 use Msgpack;
 
 /// Errors that can occur while parsing a `Name`.
@@ -158,13 +160,12 @@ impl Msgpack for Name {
         Ok(Name(name_labels))
     }
 
-    #[cfg_attr(feature = "cargo-clippy", allow(cast_possible_truncation))]
     fn to_msgpack<W: Write>(
         &self,
         writer: &mut W,
         labels: &mut Vec<Rc<[u8]>>,
     ) -> Result<(), failure::Error> {
-        rmp::encode::write_array_len(writer, self.0.len() as u32)?;
+        rmp::encode::write_array_len(writer, u32(self.0.len())?)?;
 
         for label in &self.0 {
             rmp::encode::write_uint(
@@ -212,21 +213,22 @@ impl ProtocolDecode for Name {
 }
 
 impl ProtocolEncode for Name {
-    fn encode(&self, buf: &mut ResponseBuffer) -> io::Result<()> {
+    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError> {
         let mut name = self.clone();
         while !name.0.is_empty() {
             let maybe_pos = buf.names.get(&name).cloned();
             if let Some(pos) = maybe_pos {
-                return (0xc000_u16 + pos).encode(buf);
+                return 0xc000_u16
+                    .checked_add(pos)
+                    .ok_or(::cast::Error::Underflow)?
+                    .encode(buf);
             } else {
-                #[cfg_attr(feature = "cargo-clippy", allow(cast_possible_truncation))]
-                buf.names.insert(name.clone(), buf.writer.position() as u16);
+                buf.names.insert(name.clone(), u16(buf.writer.position())?);
                 let label = name.0
                     .first()
                     .expect("unreachable, we already checked name is not empty")
                     .clone();
-                #[cfg_attr(feature = "cargo-clippy", allow(cast_possible_truncation))]
-                (label.len() as u8).encode(buf)?;
+                u8(label.len())?.encode(buf)?;
                 buf.writer.write_all(&label)?;
                 name = name.pop();
             }

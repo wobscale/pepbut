@@ -1,13 +1,14 @@
 //! Records and record data.
 
+use cast::{u32, u8};
 use failure;
 use rmp;
-use std::io::{self, Read, Write};
+use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::rc::Rc;
 
 use name::Name;
-use wire::{ProtocolEncode, ResponseBuffer};
+use wire::{ProtocolEncode, ProtocolEncodeError, ResponseBuffer};
 use Msgpack;
 
 #[cfg_attr(feature = "cargo-clippy", allow(stutter))]
@@ -215,7 +216,6 @@ impl Msgpack for RData {
         })
     }
 
-    #[cfg_attr(feature = "cargo-clippy", allow(cast_possible_truncation))]
     fn to_msgpack<W: Write>(
         &self,
         writer: &mut W,
@@ -254,7 +254,7 @@ impl Msgpack for RData {
                 target.to_msgpack(writer, labels)?;
             }
             RData::TXT(ref data) => {
-                rmp::encode::write_str_len(writer, data.len() as u32)?;
+                rmp::encode::write_str_len(writer, u32(data.len())?)?;
                 writer.write_all(data.as_bytes())?;
             }
         }
@@ -264,19 +264,19 @@ impl Msgpack for RData {
 }
 
 impl ProtocolEncode for RData {
-    fn encode(&self, buf: &mut ResponseBuffer) -> io::Result<()> {
+    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError> {
         match *self {
-            RData::A(addr) => buf.writer.write_all(&addr.octets()),
-            RData::AAAA(addr) => buf.writer.write_all(&addr.octets()),
-            RData::CNAME(ref name) | RData::NS(ref name) => name.encode(buf),
+            RData::A(addr) => buf.writer.write_all(&addr.octets())?,
+            RData::AAAA(addr) => buf.writer.write_all(&addr.octets())?,
+            RData::CNAME(ref name) | RData::NS(ref name) => name.encode(buf)?,
             RData::MX {
                 preference,
                 ref exchange,
             } => {
                 preference.encode(buf)?;
-                exchange.encode(buf)
+                exchange.encode(buf)?;
             }
-            RData::PTR(addr) => Name::from(addr).encode(buf),
+            RData::PTR(addr) => Name::from(addr).encode(buf)?,
             RData::SRV {
                 priority,
                 weight,
@@ -286,16 +286,15 @@ impl ProtocolEncode for RData {
                 priority.encode(buf)?;
                 weight.encode(buf)?;
                 port.encode(buf)?;
-                target.encode(buf)
+                target.encode(buf)?;
             }
             RData::TXT(ref s) => {
                 for chunk in s.as_bytes().chunks(255) {
-                    #[cfg_attr(feature = "cargo-clippy", allow(cast_possible_truncation))]
-                    (chunk.len() as u8).encode(buf)?;
+                    u8(chunk.len())?.encode(buf)?;
                     buf.writer.write_all(chunk)?;
                 }
-                Ok(())
             }
         }
+        Ok(())
     }
 }
