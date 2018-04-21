@@ -36,7 +36,10 @@ impl Record {
 }
 
 impl Msgpack for Record {
-    fn from_msgpack<R: Read>(reader: &mut R, labels: &[Rc<[u8]>]) -> Result<Self, failure::Error> {
+    fn from_msgpack<R: Read>(
+        reader: &mut R,
+        labels: &[Rc<[u8]>],
+    ) -> Result<Record, failure::Error> {
         // rdata reads two values
         if rmp::decode::read_array_len(reader)? != 4 {
             bail!("record must be array of 4 elements");
@@ -136,7 +139,7 @@ impl RData {
 }
 
 impl Msgpack for RData {
-    fn from_msgpack<R: Read>(reader: &mut R, labels: &[Rc<[u8]>]) -> Result<Self, failure::Error> {
+    fn from_msgpack<R: Read>(reader: &mut R, labels: &[Rc<[u8]>]) -> Result<RData, failure::Error> {
         Ok(match rmp::decode::read_int(reader)? {
             // A: addr
             1 => {

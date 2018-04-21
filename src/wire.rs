@@ -13,13 +13,13 @@ pub trait ProtocolDecode: Sized {
 }
 
 impl ProtocolDecode for u8 {
-    fn decode<T: AsRef<[u8]>>(buf: &mut Cursor<T>) -> Result<Self, ProtocolDecodeError> {
+    fn decode<T: AsRef<[u8]>>(buf: &mut Cursor<T>) -> Result<u8, ProtocolDecodeError> {
         Ok(buf.read_u8()?)
     }
 }
 
 impl ProtocolDecode for u16 {
-    fn decode<T: AsRef<[u8]>>(buf: &mut Cursor<T>) -> Result<Self, ProtocolDecodeError> {
+    fn decode<T: AsRef<[u8]>>(buf: &mut Cursor<T>) -> Result<u16, ProtocolDecodeError> {
         Ok(buf.read_u16::<BigEndian>()?)
     }
 }
@@ -40,8 +40,8 @@ impl ResponseBuffer {
 }
 
 impl Default for ResponseBuffer {
-    fn default() -> Self {
-        Self::new()
+    fn default() -> ResponseBuffer {
+        ResponseBuffer::new()
     }
 }
 
@@ -95,7 +95,7 @@ pub enum ProtocolDecodeError {
 }
 
 impl From<::std::io::Error> for ProtocolDecodeError {
-    fn from(err: ::std::io::Error) -> Self {
+    fn from(err: ::std::io::Error) -> ProtocolDecodeError {
         ProtocolDecodeError::IOError(err)
     }
 }
@@ -113,13 +113,13 @@ pub enum ProtocolEncodeError {
 }
 
 impl From<::std::io::Error> for ProtocolEncodeError {
-    fn from(err: ::std::io::Error) -> Self {
+    fn from(err: ::std::io::Error) -> ProtocolEncodeError {
         ProtocolEncodeError::IOError(err)
     }
 }
 
 impl From<::cast::Error> for ProtocolEncodeError {
-    fn from(err: ::cast::Error) -> Self {
+    fn from(err: ::cast::Error) -> ProtocolEncodeError {
         ProtocolEncodeError::CastError(err)
     }
 }

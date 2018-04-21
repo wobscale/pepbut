@@ -132,7 +132,7 @@ impl fmt::Display for Name {
 impl FromStr for Name {
     type Err = ParseNameError;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Name, ParseNameError> {
         Ok(Name((if s.ends_with('.') {
             &s[0..(s.len() - 1)]
         } else {
@@ -144,7 +144,7 @@ impl FromStr for Name {
 }
 
 impl Msgpack for Name {
-    fn from_msgpack<R: Read>(reader: &mut R, labels: &[Rc<[u8]>]) -> Result<Self, failure::Error> {
+    fn from_msgpack<R: Read>(reader: &mut R, labels: &[Rc<[u8]>]) -> Result<Name, failure::Error> {
         let label_len = rmp::decode::read_array_len(reader)? as usize;
         let mut name_labels = Vec::with_capacity(label_len);
         for _ in 0..label_len {
@@ -184,7 +184,7 @@ impl Msgpack for Name {
 }
 
 impl ProtocolDecode for Name {
-    fn decode<T: AsRef<[u8]>>(buf: &mut Cursor<T>) -> Result<Self, ProtocolDecodeError> {
+    fn decode<T: AsRef<[u8]>>(buf: &mut Cursor<T>) -> Result<Name, ProtocolDecodeError> {
         let mut name = Name(Vec::new());
         let mut orig_pos = 0;
         let mut jumps = 0;
