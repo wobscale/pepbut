@@ -144,7 +144,7 @@ impl FromStr for Name {
 }
 
 impl Msgpack for Name {
-    fn from_msgpack<R: Read>(reader: &mut R, labels: &[Rc<[u8]>]) -> Result<Name, failure::Error> {
+    fn from_msgpack(reader: &mut impl Read, labels: &[Rc<[u8]>]) -> Result<Name, failure::Error> {
         let label_len = rmp::decode::read_array_len(reader)? as usize;
         let mut name_labels = Vec::with_capacity(label_len);
         for _ in 0..label_len {
@@ -160,9 +160,9 @@ impl Msgpack for Name {
         Ok(Name(name_labels))
     }
 
-    fn to_msgpack<W: Write>(
+    fn to_msgpack(
         &self,
-        writer: &mut W,
+        writer: &mut impl Write,
         labels: &mut Vec<Rc<[u8]>>,
     ) -> Result<(), failure::Error> {
         rmp::encode::write_array_len(writer, u32(self.0.len())?)?;
@@ -184,7 +184,7 @@ impl Msgpack for Name {
 }
 
 impl ProtocolDecode for Name {
-    fn decode<T: AsRef<[u8]>>(buf: &mut Cursor<T>) -> Result<Name, ProtocolDecodeError> {
+    fn decode(buf: &mut Cursor<impl AsRef<[u8]>>) -> Result<Name, ProtocolDecodeError> {
         let mut name = Name(Vec::new());
         let mut orig_pos = 0;
         let mut jumps = 0;

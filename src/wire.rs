@@ -9,17 +9,17 @@ use name::Name;
 /// Types that implement `ProtocolDecode` can be decoded from a DNS message packet.
 pub trait ProtocolDecode: Sized {
     /// Read this type off the buffer.
-    fn decode<T: AsRef<[u8]>>(buf: &mut Cursor<T>) -> Result<Self, ProtocolDecodeError>;
+    fn decode(buf: &mut Cursor<impl AsRef<[u8]>>) -> Result<Self, ProtocolDecodeError>;
 }
 
 impl ProtocolDecode for u8 {
-    fn decode<T: AsRef<[u8]>>(buf: &mut Cursor<T>) -> Result<u8, ProtocolDecodeError> {
+    fn decode(buf: &mut Cursor<impl AsRef<[u8]>>) -> Result<u8, ProtocolDecodeError> {
         Ok(buf.read_u8()?)
     }
 }
 
 impl ProtocolDecode for u16 {
-    fn decode<T: AsRef<[u8]>>(buf: &mut Cursor<T>) -> Result<u16, ProtocolDecodeError> {
+    fn decode(buf: &mut Cursor<impl AsRef<[u8]>>) -> Result<u16, ProtocolDecodeError> {
         Ok(buf.read_u16::<BigEndian>()?)
     }
 }

@@ -36,10 +36,7 @@ impl Record {
 }
 
 impl Msgpack for Record {
-    fn from_msgpack<R: Read>(
-        reader: &mut R,
-        labels: &[Rc<[u8]>],
-    ) -> Result<Record, failure::Error> {
+    fn from_msgpack(reader: &mut impl Read, labels: &[Rc<[u8]>]) -> Result<Record, failure::Error> {
         // rdata reads two values
         if rmp::decode::read_array_len(reader)? != 4 {
             bail!("record must be array of 4 elements");
@@ -52,9 +49,9 @@ impl Msgpack for Record {
         Ok(Record { name, ttl, rdata })
     }
 
-    fn to_msgpack<W: Write>(
+    fn to_msgpack(
         &self,
-        writer: &mut W,
+        writer: &mut impl Write,
         labels: &mut Vec<Rc<[u8]>>,
     ) -> Result<(), failure::Error> {
         // rdata writes two values
@@ -139,7 +136,7 @@ impl RData {
 }
 
 impl Msgpack for RData {
-    fn from_msgpack<R: Read>(reader: &mut R, labels: &[Rc<[u8]>]) -> Result<RData, failure::Error> {
+    fn from_msgpack(reader: &mut impl Read, labels: &[Rc<[u8]>]) -> Result<RData, failure::Error> {
         Ok(match rmp::decode::read_int(reader)? {
             // A: addr
             1 => {
@@ -219,9 +216,9 @@ impl Msgpack for RData {
         })
     }
 
-    fn to_msgpack<W: Write>(
+    fn to_msgpack(
         &self,
-        writer: &mut W,
+        writer: &mut impl Write,
         labels: &mut Vec<Rc<[u8]>>,
     ) -> Result<(), failure::Error> {
         rmp::encode::write_uint(writer, self.record_type().into())?;

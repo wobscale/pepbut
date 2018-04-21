@@ -52,12 +52,9 @@ use std::rc::Rc;
 /// or deserializing zones.
 trait Msgpack: Sized {
     /// Deserialize this object from a MessagePack reader.
-    fn from_msgpack<R: Read>(reader: &mut R, labels: &[Rc<[u8]>]) -> Result<Self, failure::Error>;
+    fn from_msgpack(reader: &mut impl Read, labels: &[Rc<[u8]>]) -> Result<Self, failure::Error>;
 
     /// Serialize this object to a MessagePack reader.
-    fn to_msgpack<W: Write>(
-        &self,
-        &mut W,
-        labels: &mut Vec<Rc<[u8]>>,
-    ) -> Result<(), failure::Error>;
+    fn to_msgpack(&self, &mut impl Write, labels: &mut Vec<Rc<[u8]>>)
+        -> Result<(), failure::Error>;
 }
