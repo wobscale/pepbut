@@ -1,9 +1,5 @@
 //! Domain names and labels.
 
-// ParseNameError uses a Debug format for uts46::Errors which is an opaque type. Because Fail is
-// derived, we can't apply this cfg_attr to only that struct.
-#![cfg_attr(feature = "cargo-clippy", allow(use_debug))]
-
 use cast::{self, u16, u32, u8};
 use failure;
 use idna::uts46;
