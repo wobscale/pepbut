@@ -2,6 +2,10 @@
 //!
 //! It consists of an API service for updating records, a web interface that uses the API for users
 //! to update records, and the authoritative DNS server itself.
+//!
+//! If you are looking for a general-purpose DNS message library, this may provide the types you
+//! want. Please keep in mind that the API is at the whim of what we need for the DNS service
+//! project, and that support for record types is purposely limited.
 
 #![cfg_attr(feature = "cargo-clippy", warn(clippy_pedantic))]
 #![cfg_attr(feature = "cargo-clippy", allow(use_self))]
