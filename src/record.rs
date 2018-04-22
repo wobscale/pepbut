@@ -13,7 +13,7 @@ use wire::{ProtocolEncode, ProtocolEncodeError, ResponseBuffer};
 use Msgpack;
 
 #[cfg_attr(feature = "cargo-clippy", allow(stutter))]
-pub(crate) trait RecordTrait {
+pub trait RecordTrait {
     /// The name the record belongs to.
     fn name(&self) -> &Name;
 
