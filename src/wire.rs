@@ -358,11 +358,11 @@ mod tests {
                 name: Name::from_str("google.com").unwrap(),
                 record_type: 1,
             },
-            answer: LookupResult::Records(&vec![Record {
-                name: Name::from_str("google.com").unwrap(),
-                ttl: 293,
-                rdata: RData::A([216, 58, 211, 142].into()),
-            }]),
+            answer: LookupResult::Records(&vec![Record::new(
+                Name::from_str("google.com").unwrap(),
+                293,
+                RData::A([216, 58, 211, 142].into()),
+            )]),
         }.encode(&mut buf)
             .unwrap();
         assert_eq!(

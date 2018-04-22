@@ -19,11 +19,11 @@ fn decode(c: &mut Criterion) {
 
 fn encode(c: &mut Criterion) {
     c.bench_function("ResponseMessage::encode", |b| {
-        let records = vec![Record {
-            name: Name::from_str("google.com").unwrap(),
-            ttl: 293,
-            rdata: RData::A([216, 58, 211, 142].into()),
-        }];
+        let records = vec![Record::new(
+            Name::from_str("google.com").unwrap(),
+            293,
+            RData::A([216, 58, 211, 142].into()),
+        )];
         let message = QueryMessage::decode(&[
             0x86, 0x2a, 0x01, 0x20, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x67,
             0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x03, 0x63, 0x6f, 0x6d, 0x00, 0x00, 0x01, 0x00, 0x01,

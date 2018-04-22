@@ -45,17 +45,21 @@ impl ProtocolEncode for RecordTrait {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Record {
     /// The name for the owner of this record.
-    pub name: Name,
+    name: Name,
     /// The time-to-live for this record.
-    pub ttl: u32,
+    ttl: u32,
     /// The data for this record.
-    pub rdata: RData,
+    rdata: RData,
 }
 
 impl Record {
     /// Create a record from rdata.
     pub fn new(name: Name, ttl: u32, rdata: RData) -> Record {
         Record { name, ttl, rdata }
+    }
+
+    pub fn rdata(&self) -> &RData {
+        &self.rdata
     }
 }
 

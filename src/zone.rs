@@ -50,7 +50,7 @@ impl Zone {
     /// Add a record to the zone.
     pub fn push(&mut self, record: Record) {
         self.records
-            .entry(record.name.clone())
+            .entry(record.name().clone())
             .or_insert_with(HashMap::new)
             .entry(record.record_type())
             .or_insert_with(Vec::new)
@@ -59,7 +59,7 @@ impl Zone {
 
     /// Remove a record from the zone.
     pub fn remove<'a>(&'a mut self, record: &'a Record) {
-        if let Some(h) = self.records.get_mut(&record.name) {
+        if let Some(h) = self.records.get_mut(&record.name()) {
             if let Some(mut v) = h.get_mut(&record.record_type()) {
                 if let Some(pos) = v.iter().position(|x| x == record) {
                     v.remove(pos);
@@ -69,8 +69,8 @@ impl Zone {
                 h.remove(&record.record_type());
             }
         }
-        if self.records.get(&record.name).map(|h| h.is_empty()) == Some(true) {
-            self.records.remove(&record.name);
+        if self.records.get(&record.name()).map(|h| h.is_empty()) == Some(true) {
+            self.records.remove(&record.name());
         }
     }
 
@@ -313,11 +313,7 @@ mod tests {
 
     macro_rules! r {
         ($name:expr, $struct:expr) => {
-            Record {
-                name: $name,
-                ttl: 300,
-                rdata: $struct,
-            }
+            Record::new($name, 300, $struct)
         };
     }
 
@@ -414,19 +410,19 @@ mod tests {
     fn zone_remove() {
         let mut zone = zone_example_invalid();
         let www = Name::from_str("www.example.invalid").unwrap();
-        zone.remove(&Record {
-            name: www.clone(),
-            ttl: 300,
-            rdata: RData::A([192, 0, 2, 1].into()),
-        });
+        zone.remove(&Record::new(
+            www.clone(),
+            300,
+            RData::A([192, 0, 2, 1].into()),
+        ));
         assert!(zone.lookup(&www, 1).is_empty());
         assert!(zone.records.get(&www).is_some());
         assert!(zone.records.get(&www).unwrap().get(&1).is_none());
-        zone.remove(&Record {
-            name: www.clone(),
-            ttl: 300,
-            rdata: RData::AAAA([0x2001, 0xdb8, 0, 0, 0, 0, 0, 1].into()),
-        });
+        zone.remove(&Record::new(
+            www.clone(),
+            300,
+            RData::AAAA([0x2001, 0xdb8, 0, 0, 0, 0, 0, 1].into()),
+        ));
         assert!(zone.lookup(&www, 28).is_empty());
         assert!(zone.records.get(&www).is_none());
     }
