@@ -11,8 +11,9 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::rc::Rc;
 use std::str::{self, FromStr};
 
-use wire::{ProtocolDecode, ProtocolDecodeError, ProtocolEncode, ProtocolEncodeError,
-           ResponseBuffer};
+use wire::{
+    ProtocolDecode, ProtocolDecodeError, ProtocolEncode, ProtocolEncodeError, ResponseBuffer,
+};
 use Msgpack;
 
 /// Errors that can occur while parsing a `Name`.
