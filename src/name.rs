@@ -261,6 +261,8 @@ thread_local! {
     static LABEL_ARPA: Rc<[u8]> = Rc::from(*b"arpa");
     static LABEL_IN_ADDR: Rc<[u8]> = Rc::from(*b"in-addr");
     static LABEL_IP6: Rc<[u8]> = Rc::from(*b"ip6");
+    static LABEL_INT_IPV4: Vec<Rc<[u8]>> = (0..256).map(|i| Rc::from(format!("{}", i).as_bytes())).collect();
+    static LABEL_INT_IPV6: Vec<Rc<[u8]>> = (0..16).map(|i| Rc::from(format!("{:x}", i).as_bytes())).collect();
 }
 
 impl From<IpAddr> for Name {
@@ -276,14 +278,16 @@ impl From<Ipv4Addr> for Name {
     fn from(addr: Ipv4Addr) -> Name {
         LABEL_ARPA.with(|arpa| {
             LABEL_IN_ADDR.with(|in_addr| {
-                let mut name = Vec::with_capacity(6);
-                let octets = addr.octets();
-                for i in 0..4 {
-                    name.push(Rc::from(format!("{}", octets[3 - i]).as_bytes()));
-                }
-                name.push(in_addr.clone());
-                name.push(arpa.clone());
-                Name(name)
+                LABEL_INT_IPV4.with(|int_vec| {
+                    let mut name = Vec::with_capacity(6);
+                    let octets = addr.octets();
+                    for i in 0..4 {
+                        name.push(int_vec[octets[3 - i] as usize].clone());
+                    }
+                    name.push(in_addr.clone());
+                    name.push(arpa.clone());
+                    Name(name)
+                })
             })
         })
     }
@@ -293,15 +297,17 @@ impl From<Ipv6Addr> for Name {
     fn from(addr: Ipv6Addr) -> Name {
         LABEL_ARPA.with(|arpa| {
             LABEL_IP6.with(|ip6| {
-                let mut name = Vec::with_capacity(34);
-                let octets = addr.octets();
-                for i in 0..16 {
-                    name.push(Rc::from(format!("{:x}", octets[15 - i] & 0xf).as_bytes()));
-                    name.push(Rc::from(format!("{:x}", octets[15 - i] >> 4).as_bytes()));
-                }
-                name.push(ip6.clone());
-                name.push(arpa.clone());
-                Name(name)
+                LABEL_INT_IPV6.with(|int_vec| {
+                    let mut name = Vec::with_capacity(34);
+                    let octets = addr.octets();
+                    for i in 0..16 {
+                        name.push(int_vec[(octets[15 - i] & 0xf) as usize].clone());
+                        name.push(int_vec[(octets[15 - i] >> 4) as usize].clone());
+                    }
+                    name.push(ip6.clone());
+                    name.push(arpa.clone());
+                    Name(name)
+                })
             })
         })
     }
