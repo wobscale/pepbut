@@ -1,5 +1,6 @@
 //! Serialization and deserialization of zone files.
 
+use bytes::Bytes;
 use cast::{self, i64, u32};
 use failure;
 use rmp::{self, Marker};
@@ -7,7 +8,7 @@ use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::str::FromStr;
 
-use name::{self, Name};
+use name::{Name, ParseNameError};
 use record::{Record, RecordTrait};
 use wire::{ProtocolEncode, ProtocolEncodeError, ResponseBuffer};
 use Msgpack;
@@ -133,7 +134,9 @@ impl Zone {
         let mut labels = Vec::with_capacity(label_len);
         for _ in 0..label_len {
             let len = rmp::decode::read_str_len(reader)?;
-            labels.push(name::label_from_raw_bytes(&read_exact!(reader, len)?)?);
+            let s = read_exact!(reader, len)?;
+            ensure!(s.len() < 64, ParseNameError::LabelTooLong(s.len()));
+            labels.push(Bytes::from(s));
         }
 
         reader.seek(SeekFrom::Start(1))?;

@@ -1,5 +1,6 @@
 //! Domain names and labels.
 
+use bytes::Bytes;
 use cast::{self, u16, u32, u8};
 use failure;
 use idna::uts46;
@@ -8,7 +9,6 @@ use std::collections::HashSet;
 use std::fmt;
 use std::io::{Cursor, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::rc::Rc;
 use std::str::{self, FromStr};
 
 use wire::{
@@ -30,22 +30,9 @@ pub enum ParseNameError {
     LabelTooLong(usize),
 }
 
-/// Constructs a label from a raw byte array. This method only checks that the length of the
-/// label is 63 characters or less, and assumes that the bytes are lowercase ASCII.
-///
-/// This method should only be used if you already know the label has been encoded and is lowercase
-/// (e.g. you are reading from a binary zone file or from a lowercased DNS query message).
-pub fn label_from_raw_bytes(bytes: &[u8]) -> Result<Rc<[u8]>, ParseNameError> {
-    if bytes.len() > 63 {
-        Err(ParseNameError::LabelTooLong(bytes.len()))
-    } else {
-        Ok(Rc::from(bytes))
-    }
-}
-
 /// Validates and constructs a label from a string. This method normalizes the label to
 /// lowercase ASCII, converting non-ASCII characters into Punycode according to UTS #46.
-fn label_from_str(s: &str) -> Result<Rc<[u8]>, ParseNameError> {
+fn label_from_str(s: &str) -> Result<Bytes, ParseNameError> {
     /// Checks if a byte is valid for a DNS label.
     fn byte_ok(b: u8) -> bool {
         b.is_ascii_alphanumeric() || b == b'-'
@@ -54,19 +41,25 @@ fn label_from_str(s: &str) -> Result<Rc<[u8]>, ParseNameError> {
     if s.is_empty() {
         Err(ParseNameError::EmptyLabel)
     } else if (s.starts_with('_') && s.bytes().skip(1).all(byte_ok)) || s.bytes().all(byte_ok) {
-        label_from_raw_bytes(s.to_lowercase().as_bytes())
+        if s.len() > 63 {
+            Err(ParseNameError::LabelTooLong(s.len()))
+        } else {
+            Ok(Bytes::from(s.to_lowercase().as_bytes()))
+        }
     } else {
-        label_from_raw_bytes(
-            uts46::to_ascii(
-                s,
-                uts46::Flags {
-                    use_std3_ascii_rules: true,
-                    transitional_processing: true,
-                    verify_dns_length: true,
-                },
-            ).map_err(ParseNameError::InvalidLabel)?
-                .as_bytes(),
-        )
+        let s = uts46::to_ascii(
+            s,
+            uts46::Flags {
+                use_std3_ascii_rules: true,
+                transitional_processing: true,
+                verify_dns_length: true,
+            },
+        ).map_err(ParseNameError::InvalidLabel)?;
+        if s.len() > 63 {
+            Err(ParseNameError::LabelTooLong(s.len()))
+        } else {
+            Ok(Bytes::from(s))
+        }
     }
 }
 
@@ -77,9 +70,9 @@ fn label_from_str(s: &str) -> Result<Rc<[u8]>, ParseNameError> {
 ///
 /// A domain name is fully-qualified if the rightmost label is a top-level domain.
 ///
-/// Labels in pepbut are atomically reference-counted byte arrays (`Rc<[u8]>`). The byte arrays
-/// always represent the canonical representation of a label (the result of [UTS #46][uts46]
-/// processing, commonly the lowercase ASCII/Punycode form).
+/// Labels in pepbut are [`Bytes`]. The byte arrays always represent the canonical representation
+/// of a label (the result of [UTS #46][uts46] processing, commonly the lowercase ASCII/Punycode
+/// form).
 ///
 /// [uts46]: https://www.unicode.org/reports/tr46/
 ///
@@ -91,7 +84,7 @@ fn label_from_str(s: &str) -> Result<Rc<[u8]>, ParseNameError> {
 /// repetitive origins of names without having to handle whether or not domains are fully-qualified
 /// or not.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct Name(Vec<Rc<[u8]>>);
+pub struct Name(Vec<Bytes>);
 
 impl Name {
     /// Clones and appends all labels in an origin `Name` to this `Name`.
@@ -115,7 +108,8 @@ impl Name {
                 return Ok((len + 2, names));
             } else {
                 names.insert(name.clone());
-                len += 1 + u16(name.0
+                len += 1 + u16(name
+                    .0
                     .first()
                     .expect("unreachable, we already checked name is not empty")
                     .len())?;
@@ -164,7 +158,7 @@ impl FromStr for Name {
 }
 
 impl Msgpack for Name {
-    fn from_msgpack(reader: &mut impl Read, labels: &[Rc<[u8]>]) -> Result<Name, failure::Error> {
+    fn from_msgpack(reader: &mut impl Read, labels: &[Bytes]) -> Result<Name, failure::Error> {
         let label_len = rmp::decode::read_array_len(reader)? as usize;
         let mut name_labels = Vec::with_capacity(label_len);
         for _ in 0..label_len {
@@ -183,7 +177,7 @@ impl Msgpack for Name {
     fn to_msgpack(
         &self,
         writer: &mut impl Write,
-        labels: &mut Vec<Rc<[u8]>>,
+        labels: &mut Vec<Bytes>,
     ) -> Result<(), failure::Error> {
         rmp::encode::write_array_len(writer, u32(self.0.len())?)?;
 
@@ -226,7 +220,7 @@ impl ProtocolDecode for Name {
                 jumps += 1;
                 buf.set_position(offset.into());
             } else {
-                name.0.push(Rc::from(read_exact!(buf, length)?));
+                name.0.push(Bytes::from(read_exact!(buf, length)?));
             }
         }
     }
@@ -244,7 +238,8 @@ impl ProtocolEncode for Name {
                     .encode(buf);
             } else {
                 buf.names.insert(name.clone(), u16(buf.writer.position())?);
-                let label = name.0
+                let label = name
+                    .0
                     .first()
                     .expect("unreachable, we already checked name is not empty")
                     .clone();
@@ -258,11 +253,11 @@ impl ProtocolEncode for Name {
 }
 
 thread_local! {
-    static LABEL_ARPA: Rc<[u8]> = Rc::from(*b"arpa");
-    static LABEL_IN_ADDR: Rc<[u8]> = Rc::from(*b"in-addr");
-    static LABEL_IP6: Rc<[u8]> = Rc::from(*b"ip6");
-    static LABEL_INT_IPV4: Vec<Rc<[u8]>> = (0..256).map(|i| Rc::from(format!("{}", i).as_bytes())).collect();
-    static LABEL_INT_IPV6: Vec<Rc<[u8]>> = (0..16).map(|i| Rc::from(format!("{:x}", i).as_bytes())).collect();
+    static LABEL_ARPA: Bytes = Bytes::from_static(b"arpa");
+    static LABEL_IN_ADDR: Bytes = Bytes::from_static(b"in-addr");
+    static LABEL_IP6: Bytes = Bytes::from_static(b"ip6");
+    static LABEL_INT_IPV4: Vec<Bytes> = (0..256).map(|i| Bytes::from(format!("{}", i).as_bytes())).collect();
+    static LABEL_INT_IPV6: Vec<Bytes> = (0..16).map(|i| Bytes::from(format!("{:x}", i).as_bytes())).collect();
 }
 
 impl From<IpAddr> for Name {

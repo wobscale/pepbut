@@ -1,12 +1,12 @@
 //! Records and record data.
 
+use bytes::Bytes;
 use cast::{self, u16, u32, u8};
 use failure;
 use rmp;
 use std::cmp::min;
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::rc::Rc;
 
 use name::Name;
 use wire::{ProtocolEncode, ProtocolEncodeError, ResponseBuffer};
@@ -86,7 +86,7 @@ impl RecordTrait for Record {
 }
 
 impl Msgpack for Record {
-    fn from_msgpack(reader: &mut impl Read, labels: &[Rc<[u8]>]) -> Result<Record, failure::Error> {
+    fn from_msgpack(reader: &mut impl Read, labels: &[Bytes]) -> Result<Record, failure::Error> {
         // rdata reads two values
         if rmp::decode::read_array_len(reader)? != 4 {
             bail!("record must be array of 4 elements");
@@ -102,7 +102,7 @@ impl Msgpack for Record {
     fn to_msgpack(
         &self,
         writer: &mut impl Write,
-        labels: &mut Vec<Rc<[u8]>>,
+        labels: &mut Vec<Bytes>,
     ) -> Result<(), failure::Error> {
         // rdata writes two values
         rmp::encode::write_array_len(writer, 4)?;
@@ -195,7 +195,7 @@ impl RData {
 }
 
 impl Msgpack for RData {
-    fn from_msgpack(reader: &mut impl Read, labels: &[Rc<[u8]>]) -> Result<RData, failure::Error> {
+    fn from_msgpack(reader: &mut impl Read, labels: &[Bytes]) -> Result<RData, failure::Error> {
         Ok(match rmp::decode::read_int(reader)? {
             // A: addr
             1 => {
@@ -278,7 +278,7 @@ impl Msgpack for RData {
     fn to_msgpack(
         &self,
         writer: &mut impl Write,
-        labels: &mut Vec<Rc<[u8]>>,
+        labels: &mut Vec<Bytes>,
     ) -> Result<(), failure::Error> {
         rmp::encode::write_uint(writer, self.record_type().into())?;
 

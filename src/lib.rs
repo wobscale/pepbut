@@ -11,6 +11,7 @@
 #![cfg_attr(feature = "cargo-clippy", allow(use_self))]
 
 extern crate byteorder;
+extern crate bytes;
 extern crate cast;
 #[macro_use]
 extern crate failure;
@@ -49,16 +50,15 @@ pub mod record;
 pub mod wire;
 pub mod zone;
 
+use bytes::Bytes;
 use std::io::{Read, Write};
-use std::rc::Rc;
 
 /// A trait for objects that can be serialized to or deserialized within the context of serializing
 /// or deserializing zones.
 trait Msgpack: Sized {
     /// Deserialize this object from a MessagePack reader.
-    fn from_msgpack(reader: &mut impl Read, labels: &[Rc<[u8]>]) -> Result<Self, failure::Error>;
+    fn from_msgpack(reader: &mut impl Read, labels: &[Bytes]) -> Result<Self, failure::Error>;
 
     /// Serialize this object to a MessagePack reader.
-    fn to_msgpack(&self, &mut impl Write, labels: &mut Vec<Rc<[u8]>>)
-        -> Result<(), failure::Error>;
+    fn to_msgpack(&self, &mut impl Write, labels: &mut Vec<Bytes>) -> Result<(), failure::Error>;
 }
