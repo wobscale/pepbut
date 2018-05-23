@@ -16,7 +16,6 @@ harness = false
 lto = true
 
 [dependencies]
-byteorder = "1.2"
 bytes = "0.4"
 cast = "0.2"
 failure = "0.1"

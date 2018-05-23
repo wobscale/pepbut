@@ -1,6 +1,6 @@
 //! Records and record data.
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes};
 use cast::{self, u16, u32, u8};
 use failure;
 use rmp;
@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use name::Name;
-use wire::{ProtocolEncode, ProtocolEncodeError, ResponseBuffer};
+use wire::{ProtocolEncode, ResponseBuffer};
 use Msgpack;
 
 #[cfg_attr(feature = "cargo-clippy", allow(stutter))]
@@ -27,11 +27,11 @@ pub trait RecordTrait {
     fn encode_rdata_len(&self, buf: &ResponseBuffer) -> Result<u16, cast::Error>;
 
     /// Encodes the rdata to a buffer.
-    fn encode_rdata(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError>;
+    fn encode_rdata(&self, buf: &mut ResponseBuffer) -> Result<(), cast::Error>;
 }
 
 impl ProtocolEncode for RecordTrait {
-    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError> {
+    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), cast::Error> {
         self.name().encode(buf)?;
         self.record_type().encode(buf)?;
         1_u16.encode(buf)?; // IN class
@@ -80,7 +80,7 @@ impl RecordTrait for Record {
         self.rdata.encode_len(buf)
     }
 
-    fn encode_rdata(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError> {
+    fn encode_rdata(&self, buf: &mut ResponseBuffer) -> Result<(), cast::Error> {
         self.rdata.encode(buf)
     }
 }
@@ -323,10 +323,10 @@ impl Msgpack for RData {
 }
 
 impl ProtocolEncode for RData {
-    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError> {
+    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), cast::Error> {
         match *self {
-            RData::A(addr) => buf.writer.write_all(&addr.octets())?,
-            RData::AAAA(addr) => buf.writer.write_all(&addr.octets())?,
+            RData::A(addr) => buf.writer.put_slice(&addr.octets()),
+            RData::AAAA(addr) => buf.writer.put_slice(&addr.octets()),
             RData::CNAME(ref name) | RData::NS(ref name) => name.encode(buf)?,
             RData::MX {
                 preference,
@@ -350,7 +350,7 @@ impl ProtocolEncode for RData {
             RData::TXT(ref s) => {
                 for chunk in s.as_bytes().chunks(255) {
                     u8(chunk.len())?.encode(buf)?;
-                    buf.writer.write_all(chunk)?;
+                    buf.writer.put_slice(chunk);
                 }
             }
         }

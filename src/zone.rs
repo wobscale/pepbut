@@ -10,7 +10,7 @@ use std::str::FromStr;
 
 use name::{Name, ParseNameError};
 use record::{Record, RecordTrait};
-use wire::{ProtocolEncode, ProtocolEncodeError, ResponseBuffer};
+use wire::{ProtocolEncode, ResponseBuffer};
 use Msgpack;
 
 /// A zone is a collection of records belonging to an origin.
@@ -221,7 +221,7 @@ impl RecordTrait for SOARecord {
         Ok(mname_len + self.rname().encode_len(&names)?.0 + 20)
     }
 
-    fn encode_rdata(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError> {
+    fn encode_rdata(&self, buf: &mut ResponseBuffer) -> Result<(), cast::Error> {
         self.mname().encode(buf)?;
         self.rname().encode(buf)?;
         self.serial.encode(buf)?;

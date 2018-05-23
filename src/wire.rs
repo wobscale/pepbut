@@ -1,7 +1,7 @@
 //! DNS wire message encoding and decoding.
 
-use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use cast::u16;
+use bytes::{Buf, BufMut};
+use cast::{self, u16};
 use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Seek, SeekFrom};
 
@@ -17,32 +17,32 @@ pub trait ProtocolDecode: Sized {
 
 impl ProtocolDecode for u8 {
     fn decode(buf: &mut Cursor<impl AsRef<[u8]>>) -> Result<u8, ProtocolDecodeError> {
-        Ok(buf.read_u8()?)
+        Ok(buf.get_u8())
     }
 }
 
 impl ProtocolDecode for u16 {
     fn decode(buf: &mut Cursor<impl AsRef<[u8]>>) -> Result<u16, ProtocolDecodeError> {
-        Ok(buf.read_u16::<BigEndian>()?)
+        Ok(buf.get_u16_be())
     }
 }
 
 impl ProtocolDecode for u32 {
     fn decode(buf: &mut Cursor<impl AsRef<[u8]>>) -> Result<u32, ProtocolDecodeError> {
-        Ok(buf.read_u32::<BigEndian>()?)
+        Ok(buf.get_u32_be())
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct ResponseBuffer {
-    pub(crate) writer: Cursor<Vec<u8>>,
+    pub(crate) writer: Vec<u8>,
     pub(crate) names: HashMap<Name, u16>,
 }
 
 impl ResponseBuffer {
     pub fn new() -> ResponseBuffer {
         ResponseBuffer {
-            writer: Cursor::new(Vec::new()),
+            writer: Vec::new(),
             names: HashMap::new(),
         }
     }
@@ -58,35 +58,28 @@ impl Default for ResponseBuffer {
     }
 }
 
-impl PartialEq for ResponseBuffer {
-    fn eq(&self, rhs: &ResponseBuffer) -> bool {
-        self.writer.get_ref() == rhs.writer.get_ref() && self.names == rhs.names
-    }
-}
-
 pub trait ProtocolEncode {
-    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError>;
+    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), cast::Error>;
 }
 
 impl ProtocolEncode for u8 {
-    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError> {
-        buf.writer.write_u8(*self).map_err(|e| e.into())
+    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), cast::Error> {
+        buf.writer.put_u8(*self);
+        Ok(())
     }
 }
 
 impl ProtocolEncode for u16 {
-    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError> {
-        buf.writer
-            .write_u16::<BigEndian>(*self)
-            .map_err(|e| e.into())
+    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), cast::Error> {
+        buf.writer.put_u16_be(*self);
+        Ok(())
     }
 }
 
 impl ProtocolEncode for u32 {
-    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError> {
-        buf.writer
-            .write_u32::<BigEndian>(*self)
-            .map_err(|e| e.into())
+    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), cast::Error> {
+        buf.writer.put_u32_be(*self);
+        Ok(())
     }
 }
 
@@ -118,30 +111,6 @@ pub enum ProtocolDecodeError {
 impl From<::std::io::Error> for ProtocolDecodeError {
     fn from(err: ::std::io::Error) -> ProtocolDecodeError {
         ProtocolDecodeError::IOError(err)
-    }
-}
-
-/// The various types of errors that can occur when attempting to encode a protocol message to the
-/// wire.
-#[derive(Debug, Fail)]
-pub enum ProtocolEncodeError {
-    /// Generic IO error.
-    #[fail(display = "IO error: {}", _0)]
-    IOError(::std::io::Error),
-    /// Value cast error.
-    #[fail(display = "cast error: {}", _0)]
-    CastError(::cast::Error),
-}
-
-impl From<::std::io::Error> for ProtocolEncodeError {
-    fn from(err: ::std::io::Error) -> ProtocolEncodeError {
-        ProtocolEncodeError::IOError(err)
-    }
-}
-
-impl From<::cast::Error> for ProtocolEncodeError {
-    fn from(err: ::cast::Error) -> ProtocolEncodeError {
-        ProtocolEncodeError::CastError(err)
     }
 }
 
@@ -267,7 +236,7 @@ pub struct ResponseMessage<'a> {
 }
 
 impl<'a> ProtocolEncode for ResponseMessage<'a> {
-    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError> {
+    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), cast::Error> {
         // ID
         self.query.id.encode(buf)?;
 
@@ -372,7 +341,7 @@ mod tests {
                 0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x01, 0x25, 0x00, 0x04, 0xd8, 0x3a,
                 0xd3, 0x8e,
             ],
-            buf.writer.into_inner(),
+            buf.writer,
         );
     }
 }

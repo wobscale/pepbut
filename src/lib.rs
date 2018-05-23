@@ -10,7 +10,6 @@
 #![cfg_attr(feature = "cargo-clippy", warn(clippy_pedantic))]
 #![cfg_attr(feature = "cargo-clippy", allow(use_self))]
 
-extern crate byteorder;
 extern crate bytes;
 extern crate cast;
 #[macro_use]

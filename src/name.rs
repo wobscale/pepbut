@@ -1,6 +1,6 @@
 //! Domain names and labels.
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes};
 use cast::{self, u16, u32, u8};
 use failure;
 use idna::uts46;
@@ -11,9 +11,7 @@ use std::io::{Cursor, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::{self, FromStr};
 
-use wire::{
-    ProtocolDecode, ProtocolDecodeError, ProtocolEncode, ProtocolEncodeError, ResponseBuffer,
-};
+use wire::{ProtocolDecode, ProtocolDecodeError, ProtocolEncode, ResponseBuffer};
 use Msgpack;
 
 /// Errors that can occur while parsing a `Name`.
@@ -227,7 +225,7 @@ impl ProtocolDecode for Name {
 }
 
 impl ProtocolEncode for Name {
-    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), ProtocolEncodeError> {
+    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), cast::Error> {
         let mut name = self.clone();
         while !name.0.is_empty() {
             let maybe_pos = buf.names.get(&name).cloned();
@@ -237,14 +235,14 @@ impl ProtocolEncode for Name {
                     .ok_or(::cast::Error::Underflow)?
                     .encode(buf);
             } else {
-                buf.names.insert(name.clone(), u16(buf.writer.position())?);
+                buf.names.insert(name.clone(), u16(buf.writer.len())?);
                 let label = name
                     .0
                     .first()
                     .expect("unreachable, we already checked name is not empty")
                     .clone();
                 u8(label.len())?.encode(buf)?;
-                buf.writer.write_all(&label)?;
+                buf.writer.put_slice(&label);
                 name = name.pop();
             }
         }
@@ -321,15 +319,6 @@ mod tests {
         ($e:expr) => {
             label_from_str($e).unwrap()
         };
-    }
-
-    macro_rules! cursor {
-        ($e:expr) => {{
-            use std::io::{Seek, SeekFrom};
-            let mut c = Cursor::new($e.to_vec());
-            c.seek(SeekFrom::End(0)).unwrap();
-            c
-        }};
     }
 
     #[test]
@@ -445,7 +434,7 @@ mod tests {
         assert_eq!(
             buf,
             ResponseBuffer {
-                writer: cursor!(b"\x07example\x03com\x00"),
+                writer: b"\x07example\x03com\x00".to_vec(),
                 names: hashmap! {
                     Name::from_str("example.com").unwrap() => 0,
                     Name::from_str("com").unwrap() => 8,
@@ -468,7 +457,7 @@ mod tests {
         assert_eq!(
             buf,
             ResponseBuffer {
-                writer: cursor!(b"\x03ns1\x07example\x03com\x00\x03ns2\xc0\x04"),
+                writer: b"\x03ns1\x07example\x03com\x00\x03ns2\xc0\x04".to_vec(),
                 names: hashmap! {
                     Name::from_str("ns1.example.com").unwrap() => 0,
                     Name::from_str("example.com").unwrap() => 4,

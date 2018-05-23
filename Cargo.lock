@@ -313,7 +313,6 @@ dependencies = [
 name = "pepbut"
 version = "0.1.0"
 dependencies = [
- "byteorder 1.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "bytes 0.4.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "cast 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "criterion 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
