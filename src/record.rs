@@ -6,7 +6,7 @@ use failure;
 use rmp;
 use std::cmp::min;
 use std::io::{Read, Write};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 use name::Name;
 use wire::{ProtocolEncode, ResponseBuffer};
@@ -141,10 +141,7 @@ pub enum RData {
     NS(Name),
     /// [PTR record data](https://tools.ietf.org/html/rfc1035#section-3.3.12), commonly used for
     /// reverse DNS.
-    ///
-    /// In pepbut, PTR records use the `std::net::IpAddr` enum, which are translated into the
-    /// relevant `in-addr.arpa` or `ip6.arpa` `Name`s.
-    PTR(IpAddr),
+    PTR(Name),
     /// [SRV record data](https://tools.ietf.org/html/rfc2782), sometimes used to represent a set
     /// of hosts and ports specifying the location of a service.
     SRV {
@@ -182,9 +179,10 @@ impl RData {
         Ok(match *self {
             RData::A { .. } => 4,
             RData::AAAA { .. } => 16,
-            RData::CNAME(ref name) | RData::NS(ref name) => name.encode_len(&buf.names())?.0,
+            RData::CNAME(ref name) | RData::NS(ref name) | RData::PTR(ref name) => {
+                name.encode_len(&buf.names())?.0
+            }
             RData::MX { ref exchange, .. } => 2 + exchange.encode_len(&buf.names())?.0,
-            RData::PTR(addr) => Name::from(addr).encode_len(&buf.names())?.0,
             RData::SRV { ref target, .. } => 6 + target.encode_len(&buf.names())?.0,
             RData::TXT(ref s) => {
                 let l = s.len();
@@ -233,23 +231,8 @@ impl Msgpack for RData {
                     exchange,
                 }
             }
-            // NS: name
-            2 => RData::NS(Name::from_msgpack(reader, labels)?),
-            // PTR: addr
-            12 => {
-                let bin_len = rmp::decode::read_bin_len(reader)?;
-                if bin_len == 4 {
-                    let mut addr = [0; 4];
-                    reader.read_exact(&mut addr)?;
-                    RData::PTR(addr.into())
-                } else if bin_len == 16 {
-                    let mut addr = [0; 16];
-                    reader.read_exact(&mut addr)?;
-                    RData::PTR(addr.into())
-                } else {
-                    bail!("PTR rdata must be 4 or 16 bytes");
-                }
-            }
+            // NS | PTR: name
+            2 | 12 => RData::NS(Name::from_msgpack(reader, labels)?),
             // SRV: priority weight port target
             33 => {
                 if rmp::decode::read_array_len(reader)? != 4 {
@@ -283,15 +266,17 @@ impl Msgpack for RData {
         rmp::encode::write_uint(writer, self.record_type().into())?;
 
         match *self {
-            RData::A(addr) | RData::PTR(IpAddr::V4(addr)) => {
+            RData::A(addr) => {
                 rmp::encode::write_bin_len(writer, 4)?;
                 writer.write_all(&addr.octets())?;
             }
-            RData::AAAA(addr) | RData::PTR(IpAddr::V6(addr)) => {
+            RData::AAAA(addr) => {
                 rmp::encode::write_bin_len(writer, 16)?;
                 writer.write_all(&addr.octets())?;
             }
-            RData::CNAME(ref name) | RData::NS(ref name) => name.to_msgpack(writer, labels)?,
+            RData::CNAME(ref name) | RData::NS(ref name) | RData::PTR(ref name) => {
+                name.to_msgpack(writer, labels)?
+            }
             RData::MX {
                 preference,
                 ref exchange,
@@ -327,7 +312,9 @@ impl ProtocolEncode for RData {
         match *self {
             RData::A(addr) => buf.writer.put_slice(&addr.octets()),
             RData::AAAA(addr) => buf.writer.put_slice(&addr.octets()),
-            RData::CNAME(ref name) | RData::NS(ref name) => name.encode(buf)?,
+            RData::CNAME(ref name) | RData::NS(ref name) | RData::PTR(ref name) => {
+                name.encode(buf)?
+            }
             RData::MX {
                 preference,
                 ref exchange,
@@ -335,7 +322,6 @@ impl ProtocolEncode for RData {
                 preference.encode(buf)?;
                 exchange.encode(buf)?;
             }
-            RData::PTR(addr) => Name::from(addr).encode(buf)?,
             RData::SRV {
                 priority,
                 weight,
