@@ -3,7 +3,7 @@
 use bytes::{Buf, BufMut};
 use cast::{self, u16};
 use std::collections::{HashMap, HashSet};
-use std::io::{Cursor, Seek, SeekFrom};
+use std::io::Cursor;
 
 use name::Name;
 use record::RecordTrait;
@@ -87,9 +87,6 @@ impl ProtocolEncode for u32 {
 /// wire.
 #[derive(Debug, Fail)]
 pub enum ProtocolDecodeError {
-    /// Generic IO error.
-    #[fail(display = "IO error: {}", _0)]
-    IOError(::std::io::Error),
     /// Too many name compression pointers were present in the name to be reasonable to decode.
     #[fail(display = "too many name compression pointers to be reasonable")]
     NamePointerRecursionLimitReached,
@@ -106,12 +103,6 @@ pub enum ProtocolDecodeError {
     /// pepbut only responds to queries where QR, OPCODE, and TC are all 0.
     #[fail(display = "unacceptable query header")]
     UnacceptableHeader,
-}
-
-impl From<::std::io::Error> for ProtocolDecodeError {
-    fn from(err: ::std::io::Error) -> ProtocolDecodeError {
-        ProtocolDecodeError::IOError(err)
-    }
 }
 
 /// A query message, one of the two message types in the DNS protocol (the other being
@@ -177,14 +168,14 @@ impl QueryMessage {
         if u8::decode(&mut buf)? & 0b1111_1010 != 0 {
             return Err(ProtocolDecodeError::UnacceptableHeader);
         }
-        buf.seek(SeekFrom::Current(1))?;
+        buf.advance(1);
 
         // Next, check that QDCOUNT is at least 1. Questions after the first are ignored, but if
         // there's at least one question then we don't have an issue.
         if u16::decode(&mut buf)? < 1 {
             return Err(ProtocolDecodeError::NoQuestions);
         }
-        buf.seek(SeekFrom::Current(6))?;
+        buf.advance(6);
 
         // Next after the header is the question section.
         //

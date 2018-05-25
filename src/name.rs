@@ -1,7 +1,7 @@
 //! Domain names and labels.
 
-use bytes::{BufMut, Bytes};
-use cast::{self, u16, u32, u8};
+use bytes::{Buf, BufMut, Bytes};
+use cast::{self, u16, u32, u8, usize};
 use failure;
 use idna::uts46;
 use rmp;
@@ -218,7 +218,11 @@ impl ProtocolDecode for Name {
                 jumps += 1;
                 buf.set_position(offset.into());
             } else {
-                name.0.push(Bytes::from(read_exact!(buf, length)?));
+                let start = usize(buf.position());
+                let end = start + length as usize;
+                buf.advance(length as usize);
+                let label = &buf.get_ref().as_ref()[start..end];
+                name.0.push(Bytes::from(label));
             }
         }
     }
