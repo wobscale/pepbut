@@ -125,6 +125,8 @@ impl Name {
                 name = name.pop();
             }
         }
+        len += 1;
+        trace!("{:?} predicted length = {} bytes", self, len);
         Ok((len, names))
     }
 }

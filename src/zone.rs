@@ -245,10 +245,10 @@ pub enum LookupResult<'a> {
         glue_records: Vec<Record>,
     },
     /// Records of that name exist, but not of that type. NOERROR is set and the SOA record goes to
-    /// the AUTHORITY section.
+    /// the ADDITIONAL section.
     NameExists(SOARecord),
     /// No records of that name exist, and we are authoritative for this zone. NXDOMAIN is set and
-    /// the SOA record goes to the AUTHORITY section.
+    /// the SOA record goes to the ADDITIONAL section.
     NoName(SOARecord),
     /// We have no record of this zone. REFUSED is set. No records go to any sections.
     NoZone,
@@ -282,7 +282,7 @@ impl<'a> LookupResult<'a> {
                 ref authorities,
                 ref glue_records,
             } => [0, authorities.len(), glue_records.len()],
-            LookupResult::NameExists(_) | LookupResult::NoName(_) => [0, 1, 0],
+            LookupResult::NameExists(_) | LookupResult::NoName(_) => [0, 0, 1],
             LookupResult::NoZone => [0, 0, 0],
         }
     }

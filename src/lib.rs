@@ -15,6 +15,8 @@ extern crate cast;
 #[macro_use]
 extern crate failure;
 extern crate idna;
+#[macro_use]
+extern crate log;
 #[cfg(test)]
 #[macro_use]
 extern crate maplit;
