@@ -35,21 +35,17 @@ fn encode_err(id: u16, rcode: u8, buf: &mut Vec<u8>) {
     buf.put_u64_be(0);
 }
 
-struct Authority {
-    pub zones: HashMap<Name, Zone>,
-}
+struct Authority(HashMap<Name, Zone>);
 
 impl Authority {
     fn new() -> Authority {
-        Authority {
-            zones: HashMap::new(),
-        }
+        Authority(HashMap::new())
     }
 
     fn find_zone(&self, name: &Name) -> Option<&Zone> {
         let mut name = name.clone();
         while !name.is_empty() {
-            if let Some(zone) = self.zones.get(&name) {
+            if let Some(zone) = self.0.get(&name) {
                 return Some(zone);
             }
             name = name.pop();
@@ -58,15 +54,11 @@ impl Authority {
     }
 }
 
-struct NameServer<'a> {
-    phantom: PhantomData<&'a ()>,
-}
+struct NameServer<'a>(PhantomData<&'a ()>);
 
 impl<'a> NameServer<'a> {
     fn new() -> NameServer<'a> {
-        NameServer {
-            phantom: PhantomData,
-        }
+        NameServer(PhantomData)
     }
 }
 
@@ -112,12 +104,13 @@ fn main() {
     env_logger::init();
 
     let mut authority = Authority::new();
-    authority.zones.insert(
+    authority.0.insert(
         Name::from_str("example.invalid").unwrap(),
         Zone::read_from(&mut Cursor::new(
             &include_bytes!("../tests/data/example.invalid.zone")[..],
         )).unwrap(),
     );
+
     let mut core = Core::new().unwrap();
     let (udp_sink, udp_stream) = UdpSocket::bind(
         &SocketAddr::from_str("127.0.0.1:5355").unwrap(),
@@ -125,9 +118,8 @@ fn main() {
     ).unwrap()
         .framed(NameServer::new())
         .split();
-    let udp_fut = {
+    core.run({
         let udp_stream = udp_stream.map(|(addr, query)| {
-            eprintln!("{:?} {:?}", addr, query);
             (
                 addr,
                 match query {
@@ -144,6 +136,5 @@ fn main() {
             )
         });
         udp_sink.send_all(udp_stream)
-    };
-    core.run(udp_fut).unwrap();
+    }).unwrap();
 }
