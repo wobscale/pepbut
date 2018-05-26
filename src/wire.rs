@@ -34,27 +34,21 @@ impl ProtocolDecode for u32 {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct ResponseBuffer {
-    pub(crate) writer: Vec<u8>,
+pub struct ResponseBuffer<'a> {
+    pub(crate) writer: &'a mut Vec<u8>,
     pub(crate) names: HashMap<Name, u16>,
 }
 
-impl ResponseBuffer {
-    pub fn new() -> ResponseBuffer {
+impl<'a> ResponseBuffer<'a> {
+    pub fn new(writer: &'a mut Vec<u8>) -> ResponseBuffer<'a> {
         ResponseBuffer {
-            writer: Vec::new(),
+            writer,
             names: HashMap::new(),
         }
     }
 
     pub(crate) fn names(&self) -> HashSet<Name> {
         self.names.keys().cloned().collect()
-    }
-}
-
-impl Default for ResponseBuffer {
-    fn default() -> ResponseBuffer {
-        ResponseBuffer::new()
     }
 }
 
@@ -111,11 +105,11 @@ pub enum ProtocolDecodeError {
 pub struct QueryMessage {
     /// A random identifier. Response packets must reply with the same `id`. Due to UDP being
     /// stateless, this is needed to prevent confusing responses with each other.
-    id: u16,
+    pub id: u16,
     /// The name being queried.
-    name: Name,
+    pub name: Name,
     /// The record type being queried.
-    record_type: u16,
+    pub record_type: u16,
 }
 
 impl QueryMessage {
@@ -222,8 +216,8 @@ impl QueryMessage {
 
 #[derive(Debug, PartialEq)]
 pub struct ResponseMessage<'a> {
-    query: QueryMessage,
-    answer: LookupResult<'a>,
+    pub query: QueryMessage,
+    pub answer: LookupResult<'a>,
 }
 
 impl<'a> ProtocolEncode for ResponseMessage<'a> {

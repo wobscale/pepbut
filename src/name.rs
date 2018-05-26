@@ -90,8 +90,19 @@ impl Name {
         self.0.extend(origin.0.iter().cloned())
     }
 
+    /// Returns a cloned Name, skipping the first label.
     pub fn pop(&self) -> Name {
         Name(self.0.iter().skip(1).cloned().collect())
+    }
+
+    /// Returns the number of labels in the Name.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns if the Name is empty (the root name).
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 
     pub(crate) fn encode_len(
