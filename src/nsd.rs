@@ -1,20 +1,30 @@
 extern crate bytes;
+#[macro_use]
+extern crate clap;
 extern crate env_logger;
+extern crate failure;
 extern crate futures;
 #[macro_use]
 extern crate log;
 extern crate pepbut;
+extern crate rmp;
 extern crate tokio_core;
+extern crate users;
 
 use bytes::{Buf, BufMut};
+use env_logger::Builder;
+use failure::ResultExt;
 use futures::{Sink, Stream};
+use log::LevelFilter;
 use pepbut::name::Name;
 use pepbut::wire::{ProtocolEncode, QueryMessage, ResponseBuffer, ResponseMessage};
 use pepbut::zone::{LookupResult, Zone};
-use std::collections::HashMap;
-use std::io::{self, Cursor};
+use std::collections::hash_map::{self, HashMap};
+use std::fs::File;
+use std::io::{self, Cursor, Read, Seek};
 use std::marker::PhantomData;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::str::FromStr;
 use tokio_core::net::{UdpCodec, UdpSocket};
 use tokio_core::reactor::Core;
@@ -35,17 +45,56 @@ fn encode_err(id: u16, rcode: u8, buf: &mut Vec<u8>) {
     buf.put_u64_be(0);
 }
 
-struct Authority(HashMap<Name, Zone>);
+struct Authority {
+    zones: HashMap<Name, Zone>,
+}
 
 impl Authority {
     fn new() -> Authority {
-        Authority(HashMap::new())
+        Authority {
+            zones: HashMap::new(),
+        }
+    }
+
+    /// A minimal version of [`Zone::read_from`] which reads just the origin and serial to
+    /// determine if a full load is necessary.
+    fn load_zone(&mut self, reader: &mut (impl Read + Seek)) -> Result<(), failure::Error> {
+        let partial_state = Zone::read_from_stage1(reader)?;
+        match self.zones.entry(partial_state.origin.clone()) {
+            hash_map::Entry::Occupied(mut entry) => {
+                let current_serial = entry.get().serial;
+                if current_serial < partial_state.serial {
+                    let new_zone = Zone::read_from_stage2(partial_state, reader)?;
+                    info!(
+                        "updated zone {}, serial {}",
+                        new_zone.origin, new_zone.serial
+                    );
+                    entry.insert(new_zone);
+                } else {
+                    warn!(
+                        "ignored update to {}, new serial {}, current serial {}",
+                        partial_state.origin, partial_state.serial, current_serial
+                    );
+                }
+            }
+            hash_map::Entry::Vacant(entry) => {
+                let zone = Zone::read_from_stage2(partial_state, reader)?;
+                info!("inserted zone {}, serial {}", zone.origin, zone.serial);
+                entry.insert(zone);
+            }
+        };
+        Ok(())
+    }
+
+    fn load_zonefile<P: AsRef<Path>>(&mut self, path: P) -> Result<(), failure::Error> {
+        info!("loading zone {}", path.as_ref().display());
+        self.load_zone(&mut File::open(path)?)
     }
 
     fn find_zone(&self, name: &Name) -> Option<&Zone> {
         let mut name = name.clone();
         while !name.is_empty() {
-            if let Some(zone) = self.0.get(&name) {
+            if let Some(zone) = self.zones.get(&name) {
                 return Some(zone);
             }
             name = name.pop();
@@ -83,13 +132,13 @@ impl<'a> UdpCodec for NameServer<'a> {
         let (addr, msg) = msg;
         match msg {
             Ok(msg) => {
-                if let Err(err) = {
-                    let mut resp_buf = ResponseBuffer::new(buf);
-                    msg.encode(&mut resp_buf)
-                } {
+                if let Err(err) = msg.encode(&mut ResponseBuffer::new(buf)) {
                     // At this point we've had a rare error in ResponseMessage::encode
                     // Write out a SERVFAIL response
-                    warn!("failed to encode: msg = {:?}, err = {:?}", msg, err);
+                    warn!(
+                        "ResponseMessage::encode failed: err = {:?}, msg = {:?}",
+                        err, msg
+                    );
                     buf.clear();
                     encode_err(msg.query.id, 2, buf);
                 }
@@ -100,24 +149,49 @@ impl<'a> UdpCodec for NameServer<'a> {
     }
 }
 
-fn main() {
-    env_logger::init();
+fn main() -> Result<(), failure::Error> {
+    let matches = clap_app!(nsd =>
+        (@arg LISTEN_ADDR: -l --listen +takes_value "ipaddr:port to listen on (default [::]:53)")
+        (@arg verbose: -v ... "Sets verbosity level (max: 3)")
+    ).get_matches();
+
+    {
+        let level = matches.occurrences_of("verbose");
+        let mut builder = Builder::new();
+        if level >= 3 {
+            builder.filter_level(LevelFilter::Trace)
+        } else {
+            let level = match level {
+                0 => LevelFilter::Info,
+                1 => LevelFilter::Debug,
+                _ => LevelFilter::Trace,
+            };
+            builder
+                .filter_module("pepbut", level)
+                .filter_module("nsd", level)
+        };
+        builder.init();
+    }
+
+    if users::get_effective_uid() == 0 {
+        error!("pepbut will not run as root!");
+        error!("to listen on a privileged port, run `setcap cap_net_bind_service=+ep` on the nsd binary");
+        ::std::process::exit(1);
+    }
+
+    let mut core = Core::new().context("Failed to create tokio Core")?;
+    let addr_str = matches.value_of("LISTEN_ADDR").unwrap_or("[::]:53");
+    let addr = SocketAddr::from_str(addr_str)
+        .context(format!("Could not parse LISTEN_ADDR: {}", addr_str))?;
+    let sock = UdpSocket::bind(&addr, &core.handle())
+        .with_context(|e| format!("Failed to bind to socket: {}", e))?;
+    info!("pepbut nsd listening on {}", addr);
 
     let mut authority = Authority::new();
-    authority.0.insert(
-        Name::from_str("example.invalid").unwrap(),
-        Zone::read_from(&mut Cursor::new(
-            &include_bytes!("../tests/data/example.invalid.zone")[..],
-        )).unwrap(),
-    );
+    // FIXME temporary until we have dynamic zone loading
+    authority.load_zonefile("tests/data/example.invalid.zone")?;
 
-    let mut core = Core::new().unwrap();
-    let (udp_sink, udp_stream) = UdpSocket::bind(
-        &SocketAddr::from_str("127.0.0.1:5355").unwrap(),
-        &core.handle(),
-    ).unwrap()
-        .framed(NameServer::new())
-        .split();
+    let (udp_sink, udp_stream) = sock.framed(NameServer::new()).split();
     core.run({
         let udp_stream = udp_stream.map(|(addr, query)| {
             (
@@ -136,5 +210,6 @@ fn main() {
             )
         });
         udp_sink.send_all(udp_stream)
-    }).unwrap();
+    })?;
+    Ok(())
 }
