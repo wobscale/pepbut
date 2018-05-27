@@ -30,7 +30,9 @@ fn encode(c: &mut Criterion) {
         ]).unwrap()
             .respond(LookupResult::Records(&records));
         b.iter(|| {
-            message.encode(&mut ResponseBuffer::new(&mut Vec::new())).unwrap();
+            message
+                .encode(&mut ResponseBuffer::new(&mut Vec::new()))
+                .unwrap();
         })
     });
 }

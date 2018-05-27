@@ -443,7 +443,8 @@ mod tests {
 
     #[test]
     fn encode_smoke() {
-        let mut buf = ResponseBuffer::new();
+        let mut v = Vec::new();
+        let mut buf = ResponseBuffer::new(&mut v);
         Name::from_str("example.com")
             .unwrap()
             .encode(&mut buf)
@@ -451,7 +452,7 @@ mod tests {
         assert_eq!(
             buf,
             ResponseBuffer {
-                writer: b"\x07example\x03com\x00".to_vec(),
+                writer: &mut b"\x07example\x03com\x00".to_vec(),
                 names: hashmap! {
                     Name::from_str("example.com").unwrap() => 0,
                     Name::from_str("com").unwrap() => 8,
@@ -462,7 +463,8 @@ mod tests {
 
     #[test]
     fn encode_ns() {
-        let mut buf = ResponseBuffer::new();
+        let mut v = Vec::new();
+        let mut buf = ResponseBuffer::new(&mut v);
         Name::from_str("ns1.example.com")
             .unwrap()
             .encode(&mut buf)
@@ -474,7 +476,7 @@ mod tests {
         assert_eq!(
             buf,
             ResponseBuffer {
-                writer: b"\x03ns1\x07example\x03com\x00\x03ns2\xc0\x04".to_vec(),
+                writer: &mut b"\x03ns1\x07example\x03com\x00\x03ns2\xc0\x04".to_vec(),
                 names: hashmap! {
                     Name::from_str("ns1.example.com").unwrap() => 0,
                     Name::from_str("example.com").unwrap() => 4,
