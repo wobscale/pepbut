@@ -122,30 +122,90 @@ impl Zone {
     /// The reader is required to implement `Seek` due to the need to read the labels at the end of
     /// the zone file first before processing the rest of the zone.
     pub fn read_from(reader: &mut (impl Read + Seek)) -> Result<Zone, failure::Error> {
+        let partial_state = Zone::read_from_stage1(reader)?;
+        Zone::read_from_stage2(partial_state, reader)
+    }
+
+    /// Deserializes the origin and serial from a zone file reader in a manner that can be
+    /// completed with `Zone::read_from_stage2`.
+    ///
+    /// You can call this to check if you need to load the rest of the zone by comparing the change
+    /// in the serial number.
+    pub fn read_from_stage1(
+        reader: &mut (impl Read + Seek),
+    ) -> Result<PartialZoneState, failure::Error> {
         if rmp::decode::read_array_len(reader)? != 5 {
             bail!("zone must be array of 5 elements");
         }
+
+        let origin_len = rmp::decode::read_array_len(reader)? as usize;
+        let mut origin_ids: Vec<usize> = Vec::with_capacity(origin_len);
+        for _ in 0..origin_len {
+            origin_ids.push(rmp::decode::read_int(reader)?);
+        }
+        let origin_id_max = origin_ids
+            .iter()
+            .max()
+            .ok_or_else(|| format_err!("origin must have at least one label"))?;
+
+        let serial: u32 = rmp::decode::read_int(reader)?;
+        let record_start_pos = reader.seek(SeekFrom::Current(0))?;
 
         reader.seek(SeekFrom::End(-9))?;
         let label_offset = rmp::decode::read_u64(reader)?;
 
         reader.seek(SeekFrom::End(-i64(label_offset)?))?;
         let label_len = rmp::decode::read_array_len(reader)? as usize;
+        if label_len < origin_id_max + 1 {
+            bail!("invalid label index: {}", origin_id_max);
+        }
         let mut labels = Vec::with_capacity(label_len);
-        for _ in 0..label_len {
+        for _ in 0..(origin_id_max + 1) {
+            let len = rmp::decode::read_str_len(reader)?;
+            let s = read_exact!(reader, len)?;
+            ensure!(s.len() < 64, ParseNameError::LabelTooLong(s.len()));
+            labels.push(Bytes::from(s));
+        }
+        let remaining_label_pos = reader.seek(SeekFrom::Current(0))?;
+        let remaining_label_len = label_len - (origin_id_max + 1);
+
+        let origin = origin_ids
+            .iter()
+            .map(|i| {
+                labels
+                    .get(*i)
+                    .ok_or_else(|| format_err!("invalid label index: {}", i))
+                    .map(|x| x.clone())
+            })
+            .collect::<Result<Name, _>>()?;
+
+        Ok(PartialZoneState {
+            origin,
+            serial,
+            labels,
+            remaining_label_len,
+            remaining_label_pos,
+            record_start_pos,
+        })
+    }
+
+    pub fn read_from_stage2(
+        partial_state: PartialZoneState,
+        reader: &mut (impl Read + Seek),
+    ) -> Result<Zone, failure::Error> {
+        let mut labels = partial_state.labels;
+
+        reader.seek(SeekFrom::Start(partial_state.remaining_label_pos))?;
+        for _ in 0..partial_state.remaining_label_len {
             let len = rmp::decode::read_str_len(reader)?;
             let s = read_exact!(reader, len)?;
             ensure!(s.len() < 64, ParseNameError::LabelTooLong(s.len()));
             labels.push(Bytes::from(s));
         }
 
-        reader.seek(SeekFrom::Start(1))?;
-        let origin = Name::from_msgpack(reader, &labels)?;
+        let mut zone = Zone::new(partial_state.origin, partial_state.serial);
 
-        let serial = rmp::decode::read_int(reader)?;
-
-        let mut zone = Zone::new(origin, serial);
-
+        reader.seek(SeekFrom::Start(partial_state.record_start_pos))?;
         let record_len = rmp::decode::read_array_len(reader)?;
         for _ in 0..record_len {
             zone.push(Record::from_msgpack(reader, &labels)?);
@@ -286,6 +346,15 @@ impl<'a> LookupResult<'a> {
             LookupResult::NoZone => [0, 0, 0],
         }
     }
+}
+
+pub struct PartialZoneState {
+    pub origin: Name,
+    pub serial: u32,
+    labels: Vec<Bytes>,
+    remaining_label_len: usize,
+    remaining_label_pos: u64,
+    record_start_pos: u64,
 }
 
 #[cfg(test)]

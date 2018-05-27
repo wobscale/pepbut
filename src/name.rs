@@ -8,6 +8,7 @@ use rmp;
 use std::collections::HashSet;
 use std::fmt;
 use std::io::{Cursor, Read, Write};
+use std::iter::FromIterator;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::{self, FromStr};
 
@@ -165,6 +166,12 @@ impl FromStr for Name {
         }).split('.')
             .map(label_from_str)
             .collect::<Result<Vec<_>, _>>()?))
+    }
+}
+
+impl FromIterator<Bytes> for Name {
+    fn from_iter<T: IntoIterator<Item = Bytes>>(iter: T) -> Name {
+        Name(Vec::from_iter(iter))
     }
 }
 
