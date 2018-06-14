@@ -1,40 +1,37 @@
 extern crate bytes;
+extern crate cast;
 #[macro_use]
 extern crate clap;
 extern crate env_logger;
 extern crate failure;
-extern crate futures;
 #[macro_use]
 extern crate log;
 extern crate pepbut;
-extern crate rmp;
-extern crate tokio_core;
+extern crate tokio;
+extern crate tokio_io;
 extern crate users;
 
-use bytes::{Buf, BufMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut, IntoBuf};
+use cast::u16;
 use env_logger::Builder;
 use failure::ResultExt;
-use futures::{Sink, Stream};
 use log::LevelFilter;
 use pepbut::name::Name;
-use pepbut::wire::{ProtocolEncode, QueryMessage, ResponseBuffer, ResponseMessage};
+use pepbut::wire::{ProtocolEncode, QueryMessage, ResponseBuffer};
 use pepbut::zone::{LookupResult, Zone};
 use std::collections::hash_map::{self, HashMap};
 use std::fs::File;
 use std::io::{self, Cursor, Read, Seek};
-use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::str::FromStr;
-use tokio_core::net::{UdpCodec, UdpSocket};
-use tokio_core::reactor::Core;
+use std::sync::{Arc, RwLock};
+use tokio::net::{TcpListener, UdpFramed, UdpSocket};
+use tokio::prelude::*;
+use tokio_io::codec::{Decoder, Encoder};
 
-#[derive(Debug)]
-struct FormatError {
-    id: u16,
-}
-
-fn encode_err(id: u16, rcode: u8, buf: &mut Vec<u8>) {
+fn encode_err(id: u16, rcode: u8) -> Bytes {
+    let mut buf = BytesMut::with_capacity(8);
     // ID
     buf.put_u16_be(id);
     // QR + Opcode + AA + TC + RD
@@ -43,6 +40,7 @@ fn encode_err(id: u16, rcode: u8, buf: &mut Vec<u8>) {
     buf.put_u8(rcode);
     // QDCOUNT, ANCOUNT, NSCOUNT, ARCOUNT
     buf.put_u64_be(0);
+    buf.freeze()
 }
 
 struct Authority {
@@ -101,51 +99,97 @@ impl Authority {
         }
         None
     }
-}
 
-struct NameServer<'a>(PhantomData<&'a ()>);
-
-impl<'a> NameServer<'a> {
-    fn new() -> NameServer<'a> {
-        NameServer(PhantomData)
-    }
-}
-
-impl<'a> UdpCodec for NameServer<'a> {
-    type In = (SocketAddr, Result<QueryMessage, FormatError>);
-    type Out = (SocketAddr, Result<ResponseMessage<'a>, FormatError>);
-
-    fn decode(&mut self, src: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
-        if buf.len() < 2 {
-            Err(io::ErrorKind::InvalidData.into())
-        } else {
-            Ok((
-                *src,
-                QueryMessage::decode(buf).map_err(|_| FormatError {
-                    id: Cursor::new(buf).get_u16_be(),
-                }),
-            ))
+    fn process_message(&self, buf: Bytes) -> Bytes {
+        let query = match QueryMessage::decode(&buf) {
+            Ok(query) => query,
+            Err(_) => return encode_err(Cursor::new(buf).get_u16_be(), 1),
+        };
+        let name = query.name.clone();
+        let record_type = query.record_type;
+        let response = query.respond(match self.find_zone(&name) {
+            Some(zone) => zone.lookup(&name, record_type),
+            None => LookupResult::NoZone,
+        });
+        let mut buf = Vec::new();
+        match response.encode(&mut ResponseBuffer::new(&mut buf)) {
+            Ok(()) => Bytes::from(buf),
+            Err(err) => {
+                error!("{:?}", err);
+                encode_err(response.query.id, 2)
+            }
         }
     }
+}
 
-    fn encode(&mut self, msg: Self::Out, buf: &mut Vec<u8>) -> SocketAddr {
-        let (addr, msg) = msg;
-        match msg {
-            Ok(msg) => {
-                if let Err(err) = msg.encode(&mut ResponseBuffer::new(buf)) {
-                    // At this point we've had a rare error in ResponseMessage::encode
-                    // Write out a SERVFAIL response
-                    warn!(
-                        "ResponseMessage::encode failed: err = {:?}, msg = {:?}",
-                        err, msg
-                    );
-                    buf.clear();
-                    encode_err(msg.query.id, 2, buf);
+enum DnsCodec {
+    Tcp { len: Option<u16> },
+    Udp,
+}
+
+impl DnsCodec {
+    fn tcp() -> DnsCodec {
+        DnsCodec::Tcp { len: None }
+    }
+
+    fn udp() -> DnsCodec {
+        DnsCodec::Udp
+    }
+}
+
+impl Decoder for DnsCodec {
+    type Item = Bytes;
+    type Error = io::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<Bytes>> {
+        Ok(match self {
+            DnsCodec::Tcp {
+                len: ref mut self_len,
+            } => {
+                let len = match self_len {
+                    Some(len) => *len,
+                    None => {
+                        if src.len() >= 2 {
+                            src.split_to(2).into_buf().get_u16_be()
+                        } else {
+                            return Ok(None);
+                        }
+                    }
+                };
+                if src.len() >= (len as usize) {
+                    *self_len = None;
+                    Some(src.split_to(len as usize).freeze())
+                } else {
+                    *self_len = Some(len);
+                    None
                 }
             }
-            Err(FormatError { id }) => encode_err(id, 1, buf),
-        };
-        addr
+            DnsCodec::Udp => {
+                if src.is_empty() {
+                    None
+                } else {
+                    Some(src.take().freeze())
+                }
+            }
+        })
+    }
+}
+
+impl Encoder for DnsCodec {
+    type Item = Bytes;
+    type Error = io::Error;
+
+    fn encode(&mut self, item: Bytes, dst: &mut BytesMut) -> io::Result<()> {
+        if let DnsCodec::Tcp { .. } = self {
+            dst.reserve(2);
+            match u16(item.len()) {
+                Ok(len) => dst.put_u16_be(len),
+                Err(_) => return Err(io::ErrorKind::Other.into()),
+            }
+        }
+        dst.reserve(item.len());
+        dst.put(&item);
+        Ok(())
     }
 }
 
@@ -179,37 +223,50 @@ fn main() -> Result<(), failure::Error> {
         ::std::process::exit(1);
     }
 
-    let mut core = Core::new().context("Failed to create tokio Core")?;
     let addr_str = matches.value_of("LISTEN_ADDR").unwrap_or("[::]:53");
     let addr = SocketAddr::from_str(addr_str)
         .context(format!("Could not parse LISTEN_ADDR: {}", addr_str))?;
-    let sock = UdpSocket::bind(&addr, &core.handle())
-        .with_context(|e| format!("Failed to bind to socket: {}", e))?;
+    let tcp_listener =
+        TcpListener::bind(&addr).with_context(|e| format!("Failed to bind to TCP socket: {}", e))?;
+    let udp_socket =
+        UdpSocket::bind(&addr).with_context(|e| format!("Failed to bind to UDP socket: {}", e))?;
     info!("pepbut nsd listening on {}", addr);
 
-    let mut authority = Authority::new();
+    let authority = Arc::new(RwLock::new(Authority::new()));
     // FIXME temporary until we have dynamic zone loading
-    authority.load_zonefile("tests/data/example.invalid.zone")?;
+    authority
+        .write()
+        .unwrap()
+        .load_zonefile("tests/data/example.invalid.zone")?;
 
-    let (udp_sink, udp_stream) = sock.framed(NameServer::new()).split();
-    core.run({
-        let udp_stream = udp_stream.map(|(addr, query)| {
-            (
-                addr,
-                match query {
-                    Ok(query) => {
-                        let name = query.name.clone();
-                        let record_type = query.record_type;
-                        Ok(query.respond(match authority.find_zone(&name) {
-                            Some(zone) => zone.lookup(&name, record_type),
-                            None => LookupResult::NoZone,
-                        }))
-                    }
-                    Err(err) => Err(err),
-                },
-            )
-        });
-        udp_sink.send_all(udp_stream)
-    })?;
-    Ok(())
+    let tcp_server = {
+        let authority = authority.clone();
+        tcp_listener
+            .incoming()
+            .for_each(move |tcp| {
+                let authority = authority.clone();
+                let (sink, stream) = DnsCodec::tcp().framed(tcp).split();
+                tokio::spawn(
+                    sink.send_all(
+                        stream.map(move |b| authority.read().unwrap().process_message(b)),
+                    ).map(|_| ())
+                        .map_err(|e| error!("error in TCP server: {:?}", e)),
+                );
+                Ok(())
+            })
+            .map_err(|e| error!("error in TCP server: {:?}", e))
+    };
+
+    let udp_server = {
+        let authority = authority.clone();
+        let (sink, stream) = UdpFramed::new(udp_socket, DnsCodec::udp()).split();
+        sink.send_all(
+            stream.map(move |(b, addr)| (authority.read().unwrap().process_message(b), addr)),
+        ).map(|_| ())
+            .map_err(|e| error!("error in UDP server: {:?}", e))
+    };
+
+    // FIXME figure out how to deal with these types so we aren't mapping to ()
+    tokio::run(tcp_server.select(udp_server).map(|_| ()).map_err(|_| ()));
+    Err(failure::err_msg("core shutdown!"))
 }

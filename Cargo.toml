@@ -10,7 +10,7 @@ bench = false
 
 [features]
 default = ["nsd"]
-nsd = ["clap", "env_logger", "futures", "tokio-core", "users"]
+nsd = ["clap", "env_logger", "tokio", "tokio-io", "users"]
 
 [[bin]]
 name = "nsd"
@@ -30,11 +30,11 @@ cast = "0.2"
 clap = { version = "2.31", optional = true }
 env_logger = { version = "0.5", optional = true }
 failure = "0.1"
-futures = { version = "0.1", optional = true }
 idna = "0.1"
 log = "0.4"
 rmp = "0.8"
-tokio-core = { version = "0.1", optional = true }
+tokio = { version = "0.1", optional = true }
+tokio-io = { version = "0.1", optional = true }
 users = { version = "0.7", optional = true }
 
 [dev-dependencies]
