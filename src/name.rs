@@ -159,13 +159,15 @@ impl FromStr for Name {
     type Err = ParseNameError;
 
     fn from_str(s: &str) -> Result<Name, ParseNameError> {
-        Ok(Name((if s.ends_with('.') {
-            &s[0..(s.len() - 1)]
-        } else {
-            s
-        }).split('.')
-            .map(label_from_str)
-            .collect::<Result<Vec<_>, _>>()?))
+        Ok(Name(
+            (if s.ends_with('.') {
+                &s[0..(s.len() - 1)]
+            } else {
+                s
+            }).split('.')
+                .map(label_from_str)
+                .collect::<Result<Vec<_>, _>>()?,
+        ))
     }
 }
 
