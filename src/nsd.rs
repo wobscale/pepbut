@@ -36,7 +36,7 @@ fn encode_err(id: u16, rcode: u8) -> Bytes {
     buf.put_u16_be(id);
     // QR + Opcode + AA + TC + RD
     buf.put_u8(0b1000_0000_u8);
-    // RA + Z + RCODE (2: SERVFAIL)
+    // RA + Z + RCODE
     buf.put_u8(rcode);
     // QDCOUNT, ANCOUNT, NSCOUNT, ARCOUNT
     buf.put_u64_be(0);
@@ -181,10 +181,16 @@ impl Encoder for DnsCodec {
 
     fn encode(&mut self, item: Bytes, dst: &mut BytesMut) -> io::Result<()> {
         if let DnsCodec::Tcp { .. } = self {
-            dst.reserve(2);
             match u16(item.len()) {
-                Ok(len) => dst.put_u16_be(len),
-                Err(_) => return Err(io::ErrorKind::Other.into()),
+                Ok(len) => {
+                    dst.reserve(2);
+                    dst.put_u16_be(len);
+                }
+                Err(_) => {
+                    dst.reserve(8);
+                    dst.put(encode_err(Cursor::new(item).get_u16_be(), 2));
+                    return Ok(());
+                }
             }
         }
         dst.reserve(item.len());
