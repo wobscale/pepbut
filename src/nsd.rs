@@ -54,13 +54,16 @@ impl Authority {
         }
     }
 
-    /// A minimal version of [`Zone::read_from`] which reads just the origin and serial to
-    /// determine if a full load is necessary.
+    /// Conditionally loads a zone into the authority. The zone's origin and serial are used to
+    /// determine if the update is required before parsing the rest of the zone.
     fn load_zone(&mut self, reader: &mut (impl Read + Seek)) -> Result<(), failure::Error> {
         let partial_state = Zone::read_from_stage1(reader)?;
         match self.zones.entry(partial_state.origin.clone()) {
             hash_map::Entry::Occupied(mut entry) => {
                 let current_serial = entry.get().serial;
+                // There are rules for zone serial rollovers but we are only running master servers
+                // and we are not implementing AXFR so it really doesn't matter because we can just
+                // restart the server. ¯\_(ツ)_/¯
                 if current_serial < partial_state.serial {
                     let new_zone = Zone::read_from_stage2(partial_state, reader)?;
                     info!(
@@ -70,7 +73,7 @@ impl Authority {
                     entry.insert(new_zone);
                 } else {
                     warn!(
-                        "ignored update to {}, new serial {}, current serial {}",
+                        "ignored update to {}, loaded serial {}, current serial {}",
                         partial_state.origin, partial_state.serial, current_serial
                     );
                 }
@@ -85,7 +88,7 @@ impl Authority {
     }
 
     fn load_zonefile<P: AsRef<Path>>(&mut self, path: P) -> Result<(), failure::Error> {
-        info!("loading zone {}", path.as_ref().display());
+        info!("loading zone from {}", path.as_ref().display());
         self.load_zone(&mut File::open(path)?)
     }
 
@@ -122,6 +125,9 @@ impl Authority {
     }
 }
 
+/// Implements [`Encoder`] and [`Decoder`].
+///
+/// TCP messages start with a 2-byte length marker, so we get to handle those differently.
 enum DnsCodec {
     Tcp { len: Option<u16> },
     Udp,
@@ -200,15 +206,18 @@ impl Encoder for DnsCodec {
 }
 
 fn main() -> Result<(), failure::Error> {
+    // Command line argument parsing
     let matches = clap_app!(nsd =>
         (@arg LISTEN_ADDR: -l --listen +takes_value "ipaddr:port to listen on (default [::]:53)")
         (@arg verbose: -v ... "Sets verbosity level (max: 3)")
     ).get_matches();
 
+    // Set log level from -v option
     {
         let level = matches.occurrences_of("verbose");
         let mut builder = Builder::new();
         if level >= 3 {
+            // Enables all log messages across all crates
             builder.filter_level(LevelFilter::Trace)
         } else {
             let level = match level {
