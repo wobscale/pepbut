@@ -281,7 +281,6 @@ fn main() -> Result<(), failure::Error> {
             .map_err(|e| error!("error in UDP server: {:?}", e))
     };
 
-    // FIXME figure out how to deal with these types so we aren't mapping to ()
     tokio::run(tcp_server.select(udp_server).map(|_| ()).map_err(|_| ()));
     Err(failure::err_msg("core shutdown!"))
 }
