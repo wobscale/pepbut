@@ -9,6 +9,19 @@ use name::Name;
 use record::RecordTrait;
 use zone::LookupResult;
 
+pub fn encode_err(id: u16, rcode: u8) -> Bytes {
+    let mut buf = BytesMut::with_capacity(8);
+    // ID
+    buf.put_u16_be(id);
+    // QR + Opcode + AA + TC + RD
+    buf.put_u8(0b1000_0000_u8);
+    // RA + Z + RCODE
+    buf.put_u8(rcode);
+    // QDCOUNT, ANCOUNT, NSCOUNT, ARCOUNT
+    buf.put_u64_be(0);
+    buf.freeze()
+}
+
 /// Types that implement `ProtocolDecode` can be decoded from a DNS message packet.
 pub trait ProtocolDecode: Sized {
     /// Read this type off the buffer.

@@ -16,115 +16,15 @@ use cast::u16;
 use env_logger::Builder;
 use failure::ResultExt;
 use log::LevelFilter;
-use pepbut::name::Name;
-use pepbut::wire::{ProtocolDecode, ProtocolEncode, QueryMessage};
-use pepbut::zone::{LookupResult, Zone};
-use std::collections::hash_map::{self, HashMap};
-use std::fs::File;
-use std::io::{self, Cursor, Read, Seek};
+use pepbut::authority::Authority;
+use pepbut::wire::encode_err;
+use std::io::{self, Cursor};
 use std::net::SocketAddr;
-use std::path::Path;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use tokio::net::{TcpListener, UdpFramed, UdpSocket};
 use tokio::prelude::*;
 use tokio_io::codec::{Decoder, Encoder};
-
-fn encode_err(id: u16, rcode: u8) -> Bytes {
-    let mut buf = BytesMut::with_capacity(8);
-    // ID
-    buf.put_u16_be(id);
-    // QR + Opcode + AA + TC + RD
-    buf.put_u8(0b1000_0000_u8);
-    // RA + Z + RCODE
-    buf.put_u8(rcode);
-    // QDCOUNT, ANCOUNT, NSCOUNT, ARCOUNT
-    buf.put_u64_be(0);
-    buf.freeze()
-}
-
-struct Authority {
-    zones: HashMap<Name, Zone>,
-}
-
-impl Authority {
-    fn new() -> Authority {
-        Authority {
-            zones: HashMap::new(),
-        }
-    }
-
-    /// Conditionally loads a zone into the authority. The zone's origin and serial are used to
-    /// determine if the update is required before parsing the rest of the zone.
-    fn load_zone(&mut self, reader: &mut (impl Read + Seek)) -> Result<(), failure::Error> {
-        let partial_state = Zone::read_from_stage1(reader)?;
-        match self.zones.entry(partial_state.origin.clone()) {
-            hash_map::Entry::Occupied(mut entry) => {
-                let current_serial = entry.get().serial;
-                // There are rules for zone serial rollovers but we are only running master servers
-                // and we are not implementing AXFR so it really doesn't matter because we can just
-                // restart the server. ¯\_(ツ)_/¯
-                if current_serial < partial_state.serial {
-                    let new_zone = Zone::read_from_stage2(partial_state, reader)?;
-                    info!(
-                        "updated zone {}, serial {}",
-                        new_zone.origin, new_zone.serial
-                    );
-                    entry.insert(new_zone);
-                } else {
-                    warn!(
-                        "ignored update to {}, loaded serial {}, current serial {}",
-                        partial_state.origin, partial_state.serial, current_serial
-                    );
-                }
-            }
-            hash_map::Entry::Vacant(entry) => {
-                let zone = Zone::read_from_stage2(partial_state, reader)?;
-                info!("inserted zone {}, serial {}", zone.origin, zone.serial);
-                entry.insert(zone);
-            }
-        };
-        Ok(())
-    }
-
-    fn load_zonefile<P: AsRef<Path>>(&mut self, path: P) -> Result<(), failure::Error> {
-        info!("loading zone from {}", path.as_ref().display());
-        self.load_zone(&mut File::open(path)?)
-    }
-
-    fn find_zone(&self, name: &Name) -> Option<&Zone> {
-        let mut name = name.clone();
-        while !name.is_empty() {
-            if let Some(zone) = self.zones.get(&name) {
-                return Some(zone);
-            }
-            name = name.pop();
-        }
-        None
-    }
-
-    fn process_message(&self, buf: Bytes) -> Bytes {
-        let mut buf = Cursor::new(buf);
-        let query = match QueryMessage::decode(&mut buf) {
-            Ok(query) => query,
-            Err(_) => return encode_err(buf.get_u16_be(), 1),
-        };
-        let name = query.name.clone();
-        let record_type = query.record_type;
-        let response = query.respond(match self.find_zone(&name) {
-            Some(zone) => zone.lookup(&name, record_type),
-            None => LookupResult::NoZone,
-        });
-        let mut buf = BytesMut::new();
-        match response.encode(&mut buf, &mut HashMap::new()) {
-            Ok(()) => Bytes::from(buf),
-            Err(err) => {
-                error!("{:?}", err);
-                encode_err(response.query.id, 2)
-            }
-        }
-    }
-}
 
 /// Implements [`Encoder`] and [`Decoder`].
 ///

@@ -46,6 +46,7 @@ mod macros {
     }
 }
 
+pub mod authority;
 pub mod name;
 pub mod record;
 pub mod wire;
