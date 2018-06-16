@@ -1,16 +1,16 @@
 //! Serialization and deserialization of zone files.
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 use cast::{self, i64, u32};
 use failure;
 use rmp::{self, Marker};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::str::FromStr;
 
 use name::{Name, ParseNameError};
 use record::{Record, RecordTrait};
-use wire::{ProtocolEncode, ResponseBuffer};
+use wire::ProtocolEncode;
 use Msgpack;
 
 /// A zone is a collection of records belonging to an origin.
@@ -276,19 +276,25 @@ impl RecordTrait for SOARecord {
         3600
     }
 
-    fn encode_rdata_len(&self, buf: &ResponseBuffer) -> Result<u16, cast::Error> {
-        let (mname_len, names) = self.mname().encode_len(&buf.names())?;
+    fn encode_rdata_len(&self, names: &HashSet<Name>) -> Result<u16, cast::Error> {
+        let (mname_len, names) = self.mname().encode_len(names)?;
         Ok(mname_len + self.rname().encode_len(&names)?.0 + 20)
     }
 
-    fn encode_rdata(&self, buf: &mut ResponseBuffer) -> Result<(), cast::Error> {
-        self.mname().encode(buf)?;
-        self.rname().encode(buf)?;
-        self.serial.encode(buf)?;
-        10000_u32.encode(buf)?;
-        2400_u32.encode(buf)?;
-        604_800_u32.encode(buf)?;
-        3600_u32.encode(buf)
+    fn encode_rdata(
+        &self,
+        buf: &mut BytesMut,
+        names: &mut HashMap<Name, u16>,
+    ) -> Result<(), cast::Error> {
+        self.mname().encode(buf, names)?;
+        self.rname().encode(buf, names)?;
+        buf.reserve(20);
+        buf.put_u32_be(self.serial);
+        buf.put_u32_be(1000);
+        buf.put_u32_be(2400);
+        buf.put_u32_be(604_800);
+        buf.put_u32_be(3600);
+        Ok(())
     }
 }
 

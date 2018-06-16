@@ -1,10 +1,11 @@
 //! Domain names and labels.
 
-use bytes::{Buf, BufMut, Bytes};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use cast::{self, u16, u32, u8, usize};
 use failure;
 use idna::uts46;
 use rmp;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
 use std::io::{Cursor, Read, Write};
@@ -12,7 +13,7 @@ use std::iter::FromIterator;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::{self, FromStr};
 
-use wire::{ProtocolDecode, ProtocolDecodeError, ProtocolEncode, ResponseBuffer};
+use wire::{ProtocolDecode, ProtocolDecodeError, ProtocolEncode};
 use Msgpack;
 
 /// Errors that can occur while parsing a `Name`.
@@ -218,20 +219,20 @@ impl Msgpack for Name {
 }
 
 impl ProtocolDecode for Name {
-    fn decode(buf: &mut Cursor<impl AsRef<[u8]>>) -> Result<Name, ProtocolDecodeError> {
+    fn decode(buf: &mut Cursor<Bytes>) -> Result<Name, ProtocolDecodeError> {
         let mut name = Name(Vec::new());
         let mut orig_pos = 0;
         let mut jumps = 0;
 
         loop {
-            let length = u8::decode(buf)?;
+            let length = buf.get_u8();
             if length == 0 {
                 if jumps > 0 {
                     buf.set_position(orig_pos);
                 }
                 return Ok(name);
             } else if length > 63 {
-                let offset = ((u16::from(length) & 0x3f) << 8) + u16::from(u8::decode(buf)?);
+                let offset = ((u16::from(length) & 0x3f) << 8) + u16::from(buf.get_u8());
                 if jumps == 0 {
                     orig_pos = buf.position();
                 } else if jumps == 20 {
@@ -251,28 +252,34 @@ impl ProtocolDecode for Name {
 }
 
 impl ProtocolEncode for Name {
-    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), cast::Error> {
+    fn encode(
+        &self,
+        buf: &mut BytesMut,
+        names: &mut HashMap<Name, u16>,
+    ) -> Result<(), cast::Error> {
         let mut name = self.clone();
         while !name.0.is_empty() {
-            let maybe_pos = buf.names.get(&name).cloned();
+            let maybe_pos = names.get(&name).cloned();
             if let Some(pos) = maybe_pos {
-                return 0xc000_u16
-                    .checked_add(pos)
-                    .ok_or(::cast::Error::Underflow)?
-                    .encode(buf);
+                buf.reserve(2);
+                buf.put_u16_be(0xc000_u16.checked_add(pos).ok_or(::cast::Error::Underflow)?);
+                return Ok(());
             } else {
-                buf.names.insert(name.clone(), u16(buf.writer.len())?);
+                names.insert(name.clone(), u16(buf.len())?);
                 let label = name
                     .0
                     .first()
                     .expect("unreachable, we already checked name is not empty")
                     .clone();
-                u8(label.len())?.encode(buf)?;
-                buf.writer.put_slice(&label);
+                buf.reserve(1 + label.len());
+                buf.put_u8(u8(label.len())?);
+                buf.put_slice(&label);
                 name = name.pop();
             }
         }
-        0_u8.encode(buf)
+        buf.reserve(1);
+        buf.put_u8(0);
+        Ok(())
     }
 }
 
@@ -334,12 +341,14 @@ impl From<Ipv6Addr> for Name {
 
 #[cfg(test)]
 mod tests {
+    use bytes::{Bytes, BytesMut};
+    use std::collections::HashMap;
     use std::io::Cursor;
     use std::net::IpAddr;
     use std::str::FromStr;
 
     use name::{label_from_str, Name};
-    use wire::{ProtocolDecode, ProtocolEncode, ResponseBuffer};
+    use wire::{ProtocolDecode, ProtocolEncode};
 
     macro_rules! label {
         ($e:expr) => {
@@ -412,7 +421,9 @@ mod tests {
 
     #[test]
     fn decode() {
-        let mut buf = Cursor::new(b"\x07example\x07invalid\0\x04blah\xc0\x08");
+        let mut buf = Cursor::new(Bytes::from_static(
+            b"\x07example\x07invalid\0\x04blah\xc0\x08",
+        ));
         assert_eq!(
             Name::decode(&mut buf).unwrap(),
             Name(vec![label!("example"), label!("invalid")])
@@ -427,7 +438,7 @@ mod tests {
 
     #[test]
     fn decode_infinite() {
-        let mut buf = Cursor::new(b"\xc0\x00");
+        let mut buf = Cursor::new(Bytes::from_static(b"\xc0\x00"));
         assert!(Name::decode(&mut buf).is_err());
     }
 
@@ -452,46 +463,45 @@ mod tests {
 
     #[test]
     fn encode_smoke() {
-        let mut v = Vec::new();
-        let mut buf = ResponseBuffer::new(&mut v);
+        let mut buf = BytesMut::new();
+        let mut names = HashMap::new();
         Name::from_str("example.com")
             .unwrap()
-            .encode(&mut buf)
+            .encode(&mut buf, &mut names)
             .unwrap();
+        assert_eq!(buf, Bytes::from_static(b"\x07example\x03com\x00"));
         assert_eq!(
-            buf,
-            ResponseBuffer {
-                writer: &mut b"\x07example\x03com\x00".to_vec(),
-                names: hashmap! {
-                    Name::from_str("example.com").unwrap() => 0,
-                    Name::from_str("com").unwrap() => 8,
-                },
+            names,
+            hashmap! {
+                Name::from_str("example.com").unwrap() => 0,
+                Name::from_str("com").unwrap() => 8,
             }
         );
     }
 
     #[test]
     fn encode_ns() {
-        let mut v = Vec::new();
-        let mut buf = ResponseBuffer::new(&mut v);
+        let mut buf = BytesMut::new();
+        let mut names = HashMap::new();
         Name::from_str("ns1.example.com")
             .unwrap()
-            .encode(&mut buf)
+            .encode(&mut buf, &mut names)
             .unwrap();
         Name::from_str("ns2.example.com")
             .unwrap()
-            .encode(&mut buf)
+            .encode(&mut buf, &mut names)
             .unwrap();
         assert_eq!(
             buf,
-            ResponseBuffer {
-                writer: &mut b"\x03ns1\x07example\x03com\x00\x03ns2\xc0\x04".to_vec(),
-                names: hashmap! {
-                    Name::from_str("ns1.example.com").unwrap() => 0,
-                    Name::from_str("example.com").unwrap() => 4,
-                    Name::from_str("com").unwrap() => 12,
-                    Name::from_str("ns2.example.com").unwrap() => 17,
-                },
+            Bytes::from_static(b"\x03ns1\x07example\x03com\x00\x03ns2\xc0\x04")
+        );
+        assert_eq!(
+            names,
+            hashmap! {
+                Name::from_str("ns1.example.com").unwrap() => 0,
+                Name::from_str("example.com").unwrap() => 4,
+                Name::from_str("com").unwrap() => 12,
+                Name::from_str("ns2.example.com").unwrap() => 17,
             }
         );
     }

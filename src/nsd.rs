@@ -17,7 +17,7 @@ use env_logger::Builder;
 use failure::ResultExt;
 use log::LevelFilter;
 use pepbut::name::Name;
-use pepbut::wire::{ProtocolEncode, QueryMessage, ResponseBuffer};
+use pepbut::wire::{ProtocolDecode, ProtocolEncode, QueryMessage};
 use pepbut::zone::{LookupResult, Zone};
 use std::collections::hash_map::{self, HashMap};
 use std::fs::File;
@@ -104,9 +104,10 @@ impl Authority {
     }
 
     fn process_message(&self, buf: Bytes) -> Bytes {
-        let query = match QueryMessage::decode(&buf) {
+        let mut buf = Cursor::new(buf);
+        let query = match QueryMessage::decode(&mut buf) {
             Ok(query) => query,
-            Err(_) => return encode_err(Cursor::new(buf).get_u16_be(), 1),
+            Err(_) => return encode_err(buf.get_u16_be(), 1),
         };
         let name = query.name.clone();
         let record_type = query.record_type;
@@ -114,8 +115,8 @@ impl Authority {
             Some(zone) => zone.lookup(&name, record_type),
             None => LookupResult::NoZone,
         });
-        let mut buf = Vec::new();
-        match response.encode(&mut ResponseBuffer::new(&mut buf)) {
+        let mut buf = BytesMut::new();
+        match response.encode(&mut buf, &mut HashMap::new()) {
             Ok(()) => Bytes::from(buf),
             Err(err) => {
                 error!("{:?}", err);

@@ -1,15 +1,16 @@
 //! Records and record data.
 
-use bytes::{BufMut, Bytes};
+use bytes::{BufMut, Bytes, BytesMut};
 use cast::{self, u16, u32, u8};
 use failure;
 use rmp;
 use std::cmp::min;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use name::Name;
-use wire::{ProtocolEncode, ResponseBuffer};
+use wire::ProtocolEncode;
 use Msgpack;
 
 #[cfg_attr(feature = "cargo-clippy", allow(stutter))]
@@ -24,20 +25,31 @@ pub trait RecordTrait {
     fn ttl(&self) -> u32;
 
     /// Returns the length of the encoded rdata.
-    fn encode_rdata_len(&self, buf: &ResponseBuffer) -> Result<u16, cast::Error>;
+    fn encode_rdata_len(&self, names: &HashSet<Name>) -> Result<u16, cast::Error>;
 
     /// Encodes the rdata to a buffer.
-    fn encode_rdata(&self, buf: &mut ResponseBuffer) -> Result<(), cast::Error>;
+    fn encode_rdata(
+        &self,
+        buf: &mut BytesMut,
+        names: &mut HashMap<Name, u16>,
+    ) -> Result<(), cast::Error>;
 }
 
 impl ProtocolEncode for RecordTrait {
-    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), cast::Error> {
-        self.name().encode(buf)?;
-        self.record_type().encode(buf)?;
-        1_u16.encode(buf)?; // IN class
-        self.ttl().encode(buf)?;
-        self.encode_rdata_len(buf)?.encode(buf)?;
-        self.encode_rdata(buf)
+    fn encode(
+        &self,
+        buf: &mut BytesMut,
+        names: &mut HashMap<Name, u16>,
+    ) -> Result<(), cast::Error> {
+        self.name().encode(buf, names)?;
+        buf.reserve(10);
+        buf.put_u16_be(self.record_type());
+        buf.put_u16_be(1); // IN class
+        buf.put_u32_be(self.ttl());
+        let rdata_len = self.encode_rdata_len(&names.keys().cloned().collect())?;
+        buf.put_u16_be(rdata_len);
+        buf.reserve(rdata_len as usize);
+        self.encode_rdata(buf, names)
     }
 }
 
@@ -76,12 +88,16 @@ impl RecordTrait for Record {
         self.ttl
     }
 
-    fn encode_rdata_len(&self, buf: &ResponseBuffer) -> Result<u16, cast::Error> {
-        self.rdata.encode_len(buf)
+    fn encode_rdata_len(&self, names: &HashSet<Name>) -> Result<u16, cast::Error> {
+        self.rdata.encode_len(names)
     }
 
-    fn encode_rdata(&self, buf: &mut ResponseBuffer) -> Result<(), cast::Error> {
-        self.rdata.encode(buf)
+    fn encode_rdata(
+        &self,
+        buf: &mut BytesMut,
+        names: &mut HashMap<Name, u16>,
+    ) -> Result<(), cast::Error> {
+        self.rdata.encode(buf, names)
     }
 }
 
@@ -175,15 +191,15 @@ impl RData {
         }
     }
 
-    fn encode_len(&self, buf: &ResponseBuffer) -> Result<u16, cast::Error> {
+    fn encode_len(&self, names: &HashSet<Name>) -> Result<u16, cast::Error> {
         Ok(match *self {
             RData::A { .. } => 4,
             RData::AAAA { .. } => 16,
             RData::CNAME(ref name) | RData::NS(ref name) | RData::PTR(ref name) => {
-                name.encode_len(&buf.names())?.0
+                name.encode_len(names)?.0
             }
-            RData::MX { ref exchange, .. } => 2 + exchange.encode_len(&buf.names())?.0,
-            RData::SRV { ref target, .. } => 6 + target.encode_len(&buf.names())?.0,
+            RData::MX { ref exchange, .. } => 2 + exchange.encode_len(names)?.0,
+            RData::SRV { ref target, .. } => 6 + target.encode_len(names)?.0,
             RData::TXT(ref s) => {
                 let l = s.len();
                 u16((l / 255 + min(1, l % 255)) + l)?
@@ -308,19 +324,30 @@ impl Msgpack for RData {
 }
 
 impl ProtocolEncode for RData {
-    fn encode(&self, buf: &mut ResponseBuffer) -> Result<(), cast::Error> {
+    fn encode(
+        &self,
+        buf: &mut BytesMut,
+        names: &mut HashMap<Name, u16>,
+    ) -> Result<(), cast::Error> {
         match *self {
-            RData::A(addr) => buf.writer.put_slice(&addr.octets()),
-            RData::AAAA(addr) => buf.writer.put_slice(&addr.octets()),
+            RData::A(addr) => {
+                buf.reserve(4);
+                buf.put_slice(&addr.octets());
+            }
+            RData::AAAA(addr) => {
+                buf.reserve(16);
+                buf.put_slice(&addr.octets());
+            }
             RData::CNAME(ref name) | RData::NS(ref name) | RData::PTR(ref name) => {
-                name.encode(buf)?
+                name.encode(buf, names)?
             }
             RData::MX {
                 preference,
                 ref exchange,
             } => {
-                preference.encode(buf)?;
-                exchange.encode(buf)?;
+                buf.reserve(2);
+                buf.put_u16_be(preference);
+                exchange.encode(buf, names)?;
             }
             RData::SRV {
                 priority,
@@ -328,15 +355,17 @@ impl ProtocolEncode for RData {
                 port,
                 ref target,
             } => {
-                priority.encode(buf)?;
-                weight.encode(buf)?;
-                port.encode(buf)?;
-                target.encode(buf)?;
+                buf.reserve(6);
+                buf.put_u16_be(priority);
+                buf.put_u16_be(weight);
+                buf.put_u16_be(port);
+                target.encode(buf, names)?;
             }
             RData::TXT(ref s) => {
                 for chunk in s.as_bytes().chunks(255) {
-                    u8(chunk.len())?.encode(buf)?;
-                    buf.writer.put_slice(chunk);
+                    buf.reserve(1 + chunk.len());
+                    buf.put_u8(u8(chunk.len())?);
+                    buf.put_slice(chunk);
                 }
             }
         }
