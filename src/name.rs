@@ -244,8 +244,8 @@ impl ProtocolDecode for Name {
                 let start = usize(buf.position());
                 let end = start + length as usize;
                 buf.advance(length as usize);
-                let label = &buf.get_ref().as_ref()[start..end];
-                name.0.push(Bytes::from(label));
+                let label = buf.get_ref().slice(start, end);
+                name.0.push(label);
             }
         }
     }
