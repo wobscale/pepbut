@@ -1,4 +1,3 @@
-#[macro_use]
 extern crate clap;
 extern crate env_logger;
 extern crate failure;
@@ -9,6 +8,7 @@ extern crate tokio;
 extern crate tokio_io;
 extern crate users;
 
+use clap::{App, Arg};
 use env_logger::Builder;
 use failure::ResultExt;
 use log::LevelFilter;
@@ -21,12 +21,29 @@ use tokio::net::{TcpListener, UdpFramed, UdpSocket};
 use tokio::prelude::*;
 use tokio_io::codec::Decoder;
 
+static DEFAULT_LISTEN_ADDR: &str = "[::]:53";
+
 fn main() -> Result<(), failure::Error> {
     // Command line argument parsing
-    let matches = clap_app!(nsd =>
-        (@arg LISTEN_ADDR: -l --listen +takes_value "ipaddr:port to listen on (default [::]:53)")
-        (@arg verbose: -v ... "Sets verbosity level (max: 3)")
-    ).get_matches();
+    let matches = App::new("nsd")
+        .arg(
+            Arg::with_name("listen_addr")
+                .short("l")
+                .long("listen")
+                .value_name("LISTEN_ADDR")
+                .help(&format!(
+                    "ipaddr:port to listen on (default {})",
+                    DEFAULT_LISTEN_ADDR
+                ))
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("verbose")
+                .short("v")
+                .multiple(true)
+                .help("Sets verbosity level (max: -vvv)"),
+        )
+        .get_matches();
 
     // Set log level from -v option
     {
@@ -54,7 +71,9 @@ fn main() -> Result<(), failure::Error> {
         ::std::process::exit(1);
     }
 
-    let addr_str = matches.value_of("LISTEN_ADDR").unwrap_or("[::]:53");
+    let addr_str = matches
+        .value_of("listen_addr")
+        .unwrap_or(DEFAULT_LISTEN_ADDR);
     let addr = SocketAddr::from_str(addr_str)
         .context(format!("Could not parse LISTEN_ADDR: {}", addr_str))?;
     let tcp_listener =
