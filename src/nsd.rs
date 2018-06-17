@@ -48,6 +48,11 @@ fn main() -> Result<(), failure::Error> {
                 .multiple(true)
                 .help("Sets verbosity level (max: -vvv)"),
         )
+        .arg(
+            Arg::with_name("ZONEFILE")
+                .help("Zone files to load on start")
+                .multiple(true),
+        )
         .get_matches();
 
     // Set log level from -v option
@@ -89,11 +94,14 @@ fn main() -> Result<(), failure::Error> {
     info!("pepbut nsd listening on {}, PID {}", addr, process::id());
 
     let authority = Arc::new(RwLock::new(Authority::new()));
-    // FIXME temporary until we have dynamic zone loading
-    authority
-        .write()
-        .unwrap()
-        .load_zonefile("tests/data/example.invalid.zone")?;
+    if let Some(paths) = matches.values_of("ZONEFILE") {
+        let mut authority = authority.write().unwrap();
+        for path in paths {
+            authority
+                .load_zonefile(path)
+                .context(format!("failed to load zone {}", path))?;
+        }
+    }
 
     macro_rules! select {
         ( $first:expr, $( $fut:expr ),* ) => {
