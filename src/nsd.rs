@@ -1,11 +1,13 @@
 extern crate clap;
 extern crate env_logger;
+#[macro_use]
 extern crate failure;
 #[macro_use]
 extern crate log;
 extern crate pepbut;
 extern crate tokio;
 extern crate tokio_io;
+extern crate tokio_signal;
 extern crate users;
 
 use clap::{App, Arg};
@@ -15,11 +17,14 @@ use log::LevelFilter;
 use pepbut::authority::Authority;
 use pepbut::codec::DnsCodec;
 use std::net::SocketAddr;
+use std::process;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::net::{TcpListener, UdpFramed, UdpSocket};
 use tokio::prelude::*;
 use tokio_io::codec::Decoder;
+use tokio_signal::unix::{Signal, SIGINT, SIGTERM};
 
 static DEFAULT_LISTEN_ADDR: &str = "[::]:53";
 
@@ -80,7 +85,8 @@ fn main() -> Result<(), failure::Error> {
         TcpListener::bind(&addr).with_context(|e| format!("Failed to bind to TCP socket: {}", e))?;
     let udp_socket =
         UdpSocket::bind(&addr).with_context(|e| format!("Failed to bind to UDP socket: {}", e))?;
-    info!("pepbut nsd listening on {}", addr);
+
+    info!("pepbut nsd listening on {}, PID {}", addr, process::id());
 
     let authority = Arc::new(RwLock::new(Authority::new()));
     // FIXME temporary until we have dynamic zone loading
@@ -125,6 +131,35 @@ fn main() -> Result<(), failure::Error> {
             .map_err(|e| error!("error in UDP server: {:?}", e))
     };
 
-    tokio::run(select!(tcp_server, udp_server));
-    Err(failure::err_msg("core shutdown!"))
+    let clean_shutdown = Arc::new(AtomicBool::new(false));
+    macro_rules! signal_handler {
+        ($signal:expr) => {{
+            let clean_shutdown = clean_shutdown.clone();
+            Signal::new($signal)
+                .flatten_stream()
+                .into_future()
+                .map(move |(s, _fut)| {
+                    if let Some(s) = s {
+                        info!("received signal {}, shutting down...", s);
+                    } else {
+                        error!("signal handler received None");
+                        info!("shutting down...");
+                    }
+                    clean_shutdown.store(true, Ordering::Relaxed);
+                })
+                .map_err(|(e, _)| error!("error in SIGINT handler: {:?}", e))
+        }};
+    }
+
+    tokio::run(select!(
+        tcp_server,
+        udp_server,
+        signal_handler!(SIGINT),
+        signal_handler!(SIGTERM)
+    ));
+    if clean_shutdown.load(Ordering::Relaxed) {
+        Ok(())
+    } else {
+        bail!("unexpected shutdown!");
+    }
 }
