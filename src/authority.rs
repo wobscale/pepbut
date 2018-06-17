@@ -13,7 +13,7 @@ use zone::{LookupResult, Zone};
 
 #[derive(Debug, Default)]
 pub struct Authority {
-    zones: HashMap<Name, Zone>,
+    pub zones: HashMap<Name, Zone>,
 }
 
 impl Authority {

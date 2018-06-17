@@ -4,18 +4,23 @@ extern crate env_logger;
 extern crate failure;
 #[macro_use]
 extern crate log;
+extern crate hyper;
 extern crate pepbut;
 extern crate tokio;
 extern crate tokio_io;
 extern crate tokio_signal;
+extern crate tokio_uds;
 extern crate users;
 
 use clap::{App, Arg};
 use env_logger::Builder;
 use failure::ResultExt;
+use hyper::Server;
 use log::LevelFilter;
 use pepbut::authority::Authority;
 use pepbut::codec::DnsCodec;
+use pepbut::ctl::ControlService;
+use std::fs;
 use std::net::SocketAddr;
 use std::process;
 use std::str::FromStr;
@@ -25,8 +30,10 @@ use tokio::net::{TcpListener, UdpFramed, UdpSocket};
 use tokio::prelude::*;
 use tokio_io::codec::Decoder;
 use tokio_signal::unix::{Signal, SIGINT, SIGTERM};
+use tokio_uds::UnixListener;
 
 static DEFAULT_LISTEN_ADDR: &str = "[::]:53";
+static DEFAULT_SOCKET_PATH: &str = "/run/pepbut/nsd.sock";
 
 fn main() -> Result<(), failure::Error> {
     // Command line argument parsing
@@ -39,6 +46,17 @@ fn main() -> Result<(), failure::Error> {
                 .help(&format!(
                     "ipaddr:port to listen on (default {})",
                     DEFAULT_LISTEN_ADDR
+                ))
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("socket_path")
+                .short("s")
+                .long("socket")
+                .value_name("SOCKET_PATH")
+                .help(&format!(
+                    "Unix control socket to listen on (default {})",
+                    DEFAULT_SOCKET_PATH
                 ))
                 .takes_value(true),
         )
@@ -91,7 +109,18 @@ fn main() -> Result<(), failure::Error> {
     let udp_socket =
         UdpSocket::bind(&addr).with_context(|e| format!("Failed to bind to UDP socket: {}", e))?;
 
-    info!("pepbut nsd listening on {}, PID {}", addr, process::id());
+    let ctl_socket_path = matches
+        .value_of("socket_path")
+        .unwrap_or(DEFAULT_SOCKET_PATH);
+    let ctl_listener = UnixListener::bind(ctl_socket_path)
+        .with_context(|e| format!("Failed to bind to Unix socket: {}", e))?;
+
+    info!(
+        "pepbut nsd listening on {}, control socket {}, PID {}",
+        addr,
+        ctl_socket_path,
+        process::id()
+    );
 
     let authority = Arc::new(RwLock::new(Authority::new()));
     if let Some(paths) = matches.values_of("ZONEFILE") {
@@ -139,6 +168,13 @@ fn main() -> Result<(), failure::Error> {
             .map_err(|e| error!("error in UDP server: {:?}", e))
     };
 
+    let ctl_server = {
+        let authority = authority.clone();
+        Server::builder(ctl_listener.incoming())
+            .serve(move || ControlService::new(authority.clone()))
+            .map_err(|e| error!("error in control server: {:?}", e))
+    };
+
     let clean_shutdown = Arc::new(AtomicBool::new(false));
     macro_rules! signal_handler {
         ($signal:expr) => {{
@@ -162,10 +198,13 @@ fn main() -> Result<(), failure::Error> {
     tokio::run(select!(
         tcp_server,
         udp_server,
+        ctl_server,
         signal_handler!(SIGINT),
         signal_handler!(SIGTERM)
     ));
     if clean_shutdown.load(Ordering::Relaxed) {
+        fs::remove_file(ctl_socket_path)
+            .with_context(|_| format!("failed to remove control socket {}", ctl_socket_path))?;
         Ok(())
     } else {
         bail!("unexpected shutdown!");

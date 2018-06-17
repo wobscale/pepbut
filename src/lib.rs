@@ -14,6 +14,10 @@ extern crate bytes;
 extern crate cast;
 #[macro_use]
 extern crate failure;
+#[cfg(feature = "nsd")]
+extern crate futures;
+#[cfg(feature = "nsd")]
+extern crate hyper;
 extern crate idna;
 #[macro_use]
 extern crate log;
@@ -21,6 +25,8 @@ extern crate log;
 #[macro_use]
 extern crate maplit;
 extern crate rmp;
+#[cfg(feature = "nsd")]
+extern crate serde_json;
 #[cfg(feature = "nsd")]
 extern crate tokio_io;
 
@@ -50,7 +56,9 @@ mod macros {
 
 pub mod authority;
 pub mod codec;
+pub mod ctl;
 pub mod name;
+pub mod never;
 pub mod record;
 pub mod wire;
 pub mod zone;
