@@ -83,7 +83,10 @@ impl Zone {
         match self.records.get(name) {
             Some(h) => match h.get(&record_type) {
                 Some(v) => LookupResult::Records(v),
-                None => LookupResult::NameExists(self.soa_record()),
+                None => match h.get(&5).map(|v| v.first()) {
+                    Some(Some(c)) => LookupResult::CNAMELookup(c),
+                    _ => LookupResult::NameExists(self.soa_record()),
+                },
             },
             None => LookupResult::NoName(self.soa_record()),
         }
@@ -304,6 +307,16 @@ pub enum LookupResult<'a> {
     /// Records of that name and type exist. The value is a reference to the `Vec<Record>` for that
     /// name and type. NOERROR is set and the records go to the ANSWER section.
     Records(&'a Vec<Record>),
+    /// A CNAME record of that name exists, and records of the requested type were found for that
+    /// name.
+    CNAME {
+        cname: &'a Record,
+        found: Vec<Record>,
+        authorities: Vec<Record>,
+    },
+    /// A CNAME record of that name exists pointing outside the zone. The authority needs to follow
+    /// the CNAME and, if the data is local, provide the results in the additional section.
+    CNAMELookup(&'a Record),
     /// The name belongs to a zone delegated to another name server. NOERROR is set; the
     /// authorities go to the AUTHORITY section and the glue records go to the ADDITIONAL section.
     Delegated {
@@ -321,9 +334,19 @@ pub enum LookupResult<'a> {
 }
 
 impl<'a> LookupResult<'a> {
+    pub fn records(&self) -> Option<&Vec<Record>> {
+        if let LookupResult::Records(x) = self {
+            Some(x)
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn authoritative(&self) -> bool {
         match *self {
             LookupResult::Records(_)
+            | LookupResult::CNAME { .. }
+            | LookupResult::CNAMELookup(_)
             | LookupResult::Delegated { .. }
             | LookupResult::NameExists(_)
             | LookupResult::NoName(_) => true,
@@ -334,6 +357,8 @@ impl<'a> LookupResult<'a> {
     pub(crate) fn rcode(&self) -> u8 {
         match *self {
             LookupResult::Records(_)
+            | LookupResult::CNAME { .. }
+            | LookupResult::CNAMELookup(_)
             | LookupResult::Delegated { .. }
             | LookupResult::NameExists(_) => 0,
             LookupResult::NoName(_) => 3,
@@ -344,6 +369,12 @@ impl<'a> LookupResult<'a> {
     pub(crate) fn counts(&self) -> [usize; 3] {
         match *self {
             LookupResult::Records(v) => [v.len(), 0, 0],
+            LookupResult::CNAME {
+                ref found,
+                ref authorities,
+                ..
+            } => [1 + found.len(), authorities.len(), 0],
+            LookupResult::CNAMELookup(_) => [1, 0, 0],
             LookupResult::Delegated {
                 ref authorities,
                 ref glue_records,

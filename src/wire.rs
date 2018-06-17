@@ -234,6 +234,16 @@ impl<'a> ProtocolEncode for ResponseMessage<'a> {
         }
         match self.answer {
             LookupResult::Records(v) => encode_vec!(v)?,
+            LookupResult::CNAME {
+                cname,
+                ref found,
+                ref authorities,
+            } => {
+                (cname as &RecordTrait).encode(buf, names)?;
+                encode_vec!(found)?;
+                encode_vec!(authorities)?;
+            }
+            LookupResult::CNAMELookup(cname) => (cname as &RecordTrait).encode(buf, names)?,
             LookupResult::Delegated {
                 authorities,
                 ref glue_records,

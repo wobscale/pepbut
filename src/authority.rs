@@ -8,6 +8,7 @@ use std::io::{Cursor, Read, Seek};
 use std::path::Path;
 
 use name::Name;
+use record::RData;
 use wire::{encode_err, ProtocolDecode, ProtocolEncode, QueryMessage};
 use zone::{LookupResult, Zone};
 
@@ -83,10 +84,35 @@ impl Authority {
         };
         let name = query.name.clone();
         let record_type = query.record_type;
-        let response = query.respond(match self.find_zone(&name) {
+        let lookup = match self.find_zone(&name) {
             Some(zone) => zone.lookup(&name, record_type),
             None => LookupResult::NoZone,
-        });
+        };
+        let lookup = if let LookupResult::CNAMELookup(cname) = lookup {
+            if let RData::CNAME(target) = cname.rdata() {
+                match self.find_zone(target) {
+                    Some(zone) => LookupResult::CNAME {
+                        cname,
+                        found: zone
+                            .lookup(&target, record_type)
+                            .records()
+                            .cloned()
+                            .unwrap_or_else(Vec::new),
+                        authorities: zone
+                            .lookup(&zone.origin, 2)
+                            .records()
+                            .cloned()
+                            .unwrap_or_else(Vec::new),
+                    },
+                    None => lookup,
+                }
+            } else {
+                lookup
+            }
+        } else {
+            lookup
+        };
+        let response = query.respond(lookup);
         let mut buf = BytesMut::new();
         match response.encode(&mut buf, &mut HashMap::new()) {
             Ok(()) => Bytes::from(buf),
