@@ -155,7 +155,7 @@ fn main() -> Result<(), failure::Error> {
                     }
                     clean_shutdown.store(true, Ordering::Relaxed);
                 })
-                .map_err(|(e, _)| error!("error in SIGINT handler: {:?}", e))
+                .map_err(|(e, _)| error!("error in signal handler: {:?}", e))
         }};
     }
 
