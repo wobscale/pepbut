@@ -24,8 +24,9 @@ impl Authority {
     }
 
     /// Conditionally loads a zone into the authority. The zone's origin and serial are used to
-    /// determine if the update is required before parsing the rest of the zone.
-    fn load_zone(&mut self, reader: &mut (impl Read + Seek)) -> Result<(), failure::Error> {
+    /// determine if the update is required before parsing the rest of the zone. Returns `Ok(true)`
+    /// if the new zone was inserted or updated, `Ok(false)` if the new zone was ignored.
+    fn load_zone(&mut self, reader: &mut (impl Read + Seek)) -> Result<bool, failure::Error> {
         let partial_state = Zone::read_from_stage1(reader)?;
         match self.zones.entry(partial_state.origin.clone()) {
             hash_map::Entry::Occupied(mut entry) => {
@@ -40,23 +41,25 @@ impl Authority {
                         new_zone.origin, new_zone.serial
                     );
                     entry.insert(new_zone);
+                    Ok(true)
                 } else {
                     warn!(
                         "ignored update to {}, loaded serial {}, current serial {}",
                         partial_state.origin, partial_state.serial, current_serial
                     );
+                    Ok(false)
                 }
             }
             hash_map::Entry::Vacant(entry) => {
                 let zone = Zone::read_from_stage2(partial_state, reader)?;
                 info!("inserted zone {}, serial {}", zone.origin, zone.serial);
                 entry.insert(zone);
+                Ok(true)
             }
-        };
-        Ok(())
+        }
     }
 
-    pub fn load_zonefile<P: AsRef<Path>>(&mut self, path: P) -> Result<(), failure::Error> {
+    pub fn load_zonefile<P: AsRef<Path>>(&mut self, path: P) -> Result<bool, failure::Error> {
         info!("loading zone from {}", path.as_ref().display());
         self.load_zone(&mut File::open(path)?)
     }
