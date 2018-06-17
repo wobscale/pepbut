@@ -30,9 +30,9 @@ impl Authority {
         match self.zones.entry(partial_state.origin.clone()) {
             hash_map::Entry::Occupied(mut entry) => {
                 let current_serial = entry.get().serial;
-                // There are rules for zone serial rollovers but we are only running master servers
-                // and we are not implementing AXFR so it really doesn't matter because we can just
-                // restart the server. ¯\_(ツ)_/¯
+                // There are rules for zone serial rollovers but we are only running authoritative
+                // servers and we are not implementing AXFR so it really doesn't matter because we
+                // can just restart the server. ¯\_(ツ)_/¯
                 if current_serial < partial_state.serial {
                     let new_zone = Zone::read_from_stage2(partial_state, reader)?;
                     info!(
