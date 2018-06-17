@@ -385,6 +385,47 @@ impl<'a> LookupResult<'a> {
     }
 }
 
+impl<'a> ProtocolEncode for LookupResult<'a> {
+    fn encode(
+        &self,
+        buf: &mut BytesMut,
+        names: &mut HashMap<Name, u16>,
+    ) -> Result<(), cast::Error> {
+        macro_rules! encode_vec {
+            ($v:expr) => {
+                $v.iter()
+                    .map(|record| (record as &RecordTrait).encode(buf, names))
+                    .collect::<Result<Vec<()>, _>>()
+                    .map(|_| ())
+            };
+        }
+        match *self {
+            LookupResult::Records(v) => encode_vec!(v),
+            LookupResult::CNAME {
+                cname,
+                ref found,
+                ref authorities,
+            } => {
+                (cname as &RecordTrait).encode(buf, names)?;
+                encode_vec!(found)?;
+                encode_vec!(authorities)
+            }
+            LookupResult::CNAMELookup(cname) => (cname as &RecordTrait).encode(buf, names),
+            LookupResult::Delegated {
+                authorities,
+                ref glue_records,
+            } => {
+                encode_vec!(authorities)?;
+                encode_vec!(glue_records)
+            }
+            LookupResult::NameExists(ref soa) | LookupResult::NoName(ref soa) => {
+                (soa as &RecordTrait).encode(buf, names)
+            }
+            LookupResult::NoZone => Ok(()),
+        }
+    }
+}
+
 pub struct PartialZoneState {
     pub origin: Name,
     pub serial: u32,

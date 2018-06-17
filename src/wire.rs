@@ -6,7 +6,6 @@ use std::collections::HashMap;
 use std::io::Cursor;
 
 use name::Name;
-use record::RecordTrait;
 use zone::LookupResult;
 
 pub fn encode_err(id: u16, rcode: u8) -> Bytes {
@@ -224,40 +223,7 @@ impl<'a> ProtocolEncode for ResponseMessage<'a> {
         buf.put_u16_be(1);
 
         // Answer, authority, and additional sections
-        macro_rules! encode_vec {
-            ($v:expr) => {
-                $v.iter()
-                    .map(|record| (record as &RecordTrait).encode(buf, names))
-                    .collect::<Result<Vec<()>, _>>()
-                    .map(|_| ())
-            };
-        }
-        match self.answer {
-            LookupResult::Records(v) => encode_vec!(v)?,
-            LookupResult::CNAME {
-                cname,
-                ref found,
-                ref authorities,
-            } => {
-                (cname as &RecordTrait).encode(buf, names)?;
-                encode_vec!(found)?;
-                encode_vec!(authorities)?;
-            }
-            LookupResult::CNAMELookup(cname) => (cname as &RecordTrait).encode(buf, names)?,
-            LookupResult::Delegated {
-                authorities,
-                ref glue_records,
-            } => {
-                encode_vec!(authorities)?;
-                encode_vec!(glue_records)?;
-            }
-            LookupResult::NameExists(ref soa) | LookupResult::NoName(ref soa) => {
-                (soa as &RecordTrait).encode(buf, names)?
-            }
-            LookupResult::NoZone => {}
-        }
-
-        Ok(())
+        self.answer.encode(buf, names)
     }
 }
 
