@@ -1,5 +1,3 @@
-extern crate bytes;
-extern crate cast;
 #[macro_use]
 extern crate clap;
 extern crate env_logger;
@@ -11,100 +9,17 @@ extern crate tokio;
 extern crate tokio_io;
 extern crate users;
 
-use bytes::{Buf, BufMut, Bytes, BytesMut, IntoBuf};
-use cast::u16;
 use env_logger::Builder;
 use failure::ResultExt;
 use log::LevelFilter;
 use pepbut::authority::Authority;
-use pepbut::wire::encode_err;
-use std::io::{self, Cursor};
+use pepbut::codec::DnsCodec;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use tokio::net::{TcpListener, UdpFramed, UdpSocket};
 use tokio::prelude::*;
-use tokio_io::codec::{Decoder, Encoder};
-
-/// Implements [`Encoder`] and [`Decoder`].
-///
-/// TCP messages start with a 2-byte length marker, so we get to handle those differently.
-enum DnsCodec {
-    Tcp { len: Option<u16> },
-    Udp,
-}
-
-impl DnsCodec {
-    fn tcp() -> DnsCodec {
-        DnsCodec::Tcp { len: None }
-    }
-
-    fn udp() -> DnsCodec {
-        DnsCodec::Udp
-    }
-}
-
-impl Decoder for DnsCodec {
-    type Item = Bytes;
-    type Error = io::Error;
-
-    fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<Bytes>> {
-        Ok(match self {
-            DnsCodec::Tcp {
-                len: ref mut self_len,
-            } => {
-                let len = match self_len {
-                    Some(len) => *len,
-                    None => {
-                        if src.len() >= 2 {
-                            src.split_to(2).into_buf().get_u16_be()
-                        } else {
-                            return Ok(None);
-                        }
-                    }
-                };
-                if src.len() >= (len as usize) {
-                    *self_len = None;
-                    Some(src.split_to(len as usize).freeze())
-                } else {
-                    *self_len = Some(len);
-                    None
-                }
-            }
-            DnsCodec::Udp => {
-                if src.is_empty() {
-                    None
-                } else {
-                    Some(src.take().freeze())
-                }
-            }
-        })
-    }
-}
-
-impl Encoder for DnsCodec {
-    type Item = Bytes;
-    type Error = io::Error;
-
-    fn encode(&mut self, item: Bytes, dst: &mut BytesMut) -> io::Result<()> {
-        if let DnsCodec::Tcp { .. } = self {
-            match u16(item.len()) {
-                Ok(len) => {
-                    dst.reserve(2);
-                    dst.put_u16_be(len);
-                }
-                Err(_) => {
-                    dst.reserve(8);
-                    dst.put(encode_err(Cursor::new(item).get_u16_be(), 2));
-                    return Ok(());
-                }
-            }
-        }
-        dst.reserve(item.len());
-        dst.put(&item);
-        Ok(())
-    }
-}
+use tokio_io::codec::Decoder;
 
 fn main() -> Result<(), failure::Error> {
     // Command line argument parsing

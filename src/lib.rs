@@ -21,6 +21,8 @@ extern crate log;
 #[macro_use]
 extern crate maplit;
 extern crate rmp;
+#[cfg(feature = "nsd")]
+extern crate tokio_io;
 
 /// Macros used globally across pepbut.
 #[macro_use]
@@ -47,6 +49,7 @@ mod macros {
 }
 
 pub mod authority;
+pub mod codec;
 pub mod name;
 pub mod record;
 pub mod wire;
