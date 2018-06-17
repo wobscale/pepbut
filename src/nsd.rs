@@ -70,6 +70,15 @@ fn main() -> Result<(), failure::Error> {
         .unwrap()
         .load_zonefile("tests/data/example.invalid.zone")?;
 
+    macro_rules! select {
+        ( $first:expr, $( $fut:expr ),* ) => {
+            $first
+            $(
+                .select($fut).map(|_| ()).map_err(|_| ())
+            )*
+        };
+    }
+
     let tcp_server = {
         let authority = authority.clone();
         tcp_listener
@@ -97,6 +106,6 @@ fn main() -> Result<(), failure::Error> {
             .map_err(|e| error!("error in UDP server: {:?}", e))
     };
 
-    tokio::run(tcp_server.select(udp_server).map(|_| ()).map_err(|_| ()));
+    tokio::run(select!(tcp_server, udp_server));
     Err(failure::err_msg("core shutdown!"))
 }
