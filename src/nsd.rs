@@ -37,7 +37,7 @@ static DEFAULT_SOCKET_PATH: &str = "/run/pepbut/nsd.sock";
 
 fn main() -> Result<(), failure::Error> {
     // Command line argument parsing
-    let matches = App::new("nsd")
+    let matches = App::new("pepbut-nsd")
         .arg(
             Arg::with_name("listen_addr")
                 .short("l")

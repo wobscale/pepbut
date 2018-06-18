@@ -29,6 +29,8 @@ extern crate rmp;
 extern crate serde_json;
 #[cfg(feature = "nsd")]
 extern crate tokio_io;
+#[cfg(feature = "zone-convert")]
+extern crate trust_dns;
 
 /// Macros used globally across pepbut.
 #[macro_use]
@@ -60,6 +62,7 @@ pub mod ctl;
 pub mod name;
 pub mod never;
 pub mod record;
+pub mod text_zone;
 pub mod wire;
 pub mod zone;
 
