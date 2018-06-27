@@ -4,7 +4,7 @@ use failure;
 use futures::future::{self, FutureResult, IntoFuture};
 use hyper::service::Service;
 use hyper::{Body, Method, Request, Response, StatusCode};
-use serde_json::{self, Value};
+use serde_json::Value;
 use std::sync::{Arc, RwLock};
 
 use authority::Authority;
@@ -55,22 +55,21 @@ impl Service for ControlService {
                 };
             }
 
-            *response.body_mut() = Body::from(
-                try500!(serde_json::to_string_pretty(&try500!(
-                    match (req.method(), req.uri().path()) {
-                        (&Method::GET, "/zones") => self.get_zones(),
-                        _ => {
-                            *response.status_mut() = StatusCode::NOT_FOUND;
-                            return future::ok(response);
-                        }
-                    }
-                ))) + "\n",
-            );
+            if let Some(value) = match (req.method(), req.uri().path()) {
+                (&Method::GET, "/zones") => Some(try500!(self.get_zones())),
+                _ => {
+                    *response.status_mut() = StatusCode::NOT_FOUND;
+                    None
+                }
+            } {
+                *response.body_mut() = Body::from(format!("{:#}\n", &value));
+            }
+
             info!(
                 "{} {} {}",
+                response.status().as_u16(),
                 req.method(),
                 req.uri().path(),
-                response.status(),
             );
             response
         })
