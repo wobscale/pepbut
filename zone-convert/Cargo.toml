@@ -1,0 +1,10 @@
+[package]
+name = "pepbut-zone-convert"
+version = "0.1.0"
+authors = ["iliana weller <ilianaw@buttslol.net>"]
+
+[dependencies]
+clap = "2.31"
+failure = "0.1"
+pepbut = { version = "0.1", path = "../" }
+trust-dns = { version = "0.14", default-features = false }

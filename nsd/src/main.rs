@@ -1,11 +1,18 @@
+#![cfg_attr(feature = "cargo-clippy", warn(clippy_pedantic))]
+#![cfg_attr(feature = "cargo-clippy", allow(use_self))]
+
+extern crate bytes;
+extern crate cast;
 extern crate clap;
 extern crate env_logger;
 #[macro_use]
 extern crate failure;
+extern crate futures;
+extern crate hyper;
 #[macro_use]
 extern crate log;
-extern crate hyper;
 extern crate pepbut;
+extern crate serde_json;
 extern crate tokio;
 extern crate tokio_io;
 extern crate tokio_signal;
@@ -18,8 +25,6 @@ use failure::ResultExt;
 use hyper::Server;
 use log::LevelFilter;
 use pepbut::authority::Authority;
-use pepbut::codec::DnsCodec;
-use pepbut::ctl::ControlService;
 use std::fs;
 use std::net::SocketAddr;
 use std::process;
@@ -31,6 +36,13 @@ use tokio::prelude::*;
 use tokio_io::codec::Decoder;
 use tokio_signal::unix::{Signal, SIGINT, SIGTERM};
 use tokio_uds::UnixListener;
+
+mod codec;
+mod ctl;
+mod never;
+
+use codec::DnsCodec;
+use ctl::ControlService;
 
 static DEFAULT_LISTEN_ADDR: &str = "[::]:53";
 static DEFAULT_SOCKET_PATH: &str = "/run/pepbut/nsd.sock";

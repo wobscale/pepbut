@@ -1,11 +1,8 @@
-#![cfg(feature = "nsd")]
-
 use bytes::{Buf, BufMut, Bytes, BytesMut, IntoBuf};
 use cast::u16;
+use pepbut::wire::encode_err;
 use std::io::{self, Cursor};
 use tokio_io::codec::{Decoder, Encoder};
-
-use wire::encode_err;
 
 /// Implements [`Encoder`] and [`Decoder`].
 ///

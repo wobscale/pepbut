@@ -1,5 +1,3 @@
-#![cfg(feature = "nsd")]
-
 use bytes::{Buf, Bytes, BytesMut};
 use failure;
 use std::collections::hash_map::{self, HashMap};

@@ -1,13 +1,11 @@
-#![cfg(feature = "nsd")]
-
 use failure;
 use futures::future::{self, FutureResult, IntoFuture};
 use hyper::service::Service;
 use hyper::{Body, Method, Request, Response, StatusCode};
+use pepbut::authority::Authority;
 use serde_json::Value;
 use std::sync::{Arc, RwLock};
 
-use authority::Authority;
 use never::Never;
 
 pub struct ControlService {
