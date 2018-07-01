@@ -162,7 +162,7 @@ impl FromStr for Name {
     fn from_str(s: &str) -> Result<Name, ParseNameError> {
         Ok(Name(
             (if s.ends_with('.') {
-                &s[0..(s.len() - 1)]
+                s.split_at(s.len() - 1).0
             } else {
                 s
             }).split('.')
@@ -287,8 +287,7 @@ thread_local! {
     static LABEL_ARPA: Bytes = Bytes::from_static(b"arpa");
     static LABEL_IN_ADDR: Bytes = Bytes::from_static(b"in-addr");
     static LABEL_IP6: Bytes = Bytes::from_static(b"ip6");
-    static LABEL_INT_IPV4: Vec<Bytes> = (0..256).map(|i| Bytes::from(format!("{}", i).as_bytes())).collect();
-    static LABEL_INT_IPV6: Vec<Bytes> = (0..16).map(|i| Bytes::from(format!("{:x}", i).as_bytes())).collect();
+    static HEX_DIGITS: Bytes = Bytes::from_static(b"0123456789abcdef");
 }
 
 impl From<IpAddr> for Name {
@@ -304,16 +303,13 @@ impl From<Ipv4Addr> for Name {
     fn from(addr: Ipv4Addr) -> Name {
         LABEL_ARPA.with(|arpa| {
             LABEL_IN_ADDR.with(|in_addr| {
-                LABEL_INT_IPV4.with(|int_vec| {
-                    let mut name = Vec::with_capacity(6);
-                    let octets = addr.octets();
-                    for i in 0..4 {
-                        name.push(int_vec[octets[3 - i] as usize].clone());
-                    }
-                    name.push(in_addr.clone());
-                    name.push(arpa.clone());
-                    Name(name)
-                })
+                let mut name = Vec::with_capacity(6);
+                for octet in addr.octets().iter().rev() {
+                    name.push(Bytes::from(format!("{}", octet).as_bytes()));
+                }
+                name.push(in_addr.clone());
+                name.push(arpa.clone());
+                Name(name)
             })
         })
     }
@@ -323,12 +319,12 @@ impl From<Ipv6Addr> for Name {
     fn from(addr: Ipv6Addr) -> Name {
         LABEL_ARPA.with(|arpa| {
             LABEL_IP6.with(|ip6| {
-                LABEL_INT_IPV6.with(|int_vec| {
+                HEX_DIGITS.with(|hex| {
                     let mut name = Vec::with_capacity(34);
-                    let octets = addr.octets();
-                    for i in 0..16 {
-                        name.push(int_vec[(octets[15 - i] & 0xf) as usize].clone());
-                        name.push(int_vec[(octets[15 - i] >> 4) as usize].clone());
+                    for octet in addr.octets().iter().rev() {
+                        let (low, high) = ((octet & 0xf) as usize, (octet >> 4) as usize);
+                        name.push(hex.slice(low, low + 1));
+                        name.push(hex.slice(high, high + 1));
                     }
                     name.push(ip6.clone());
                     name.push(arpa.clone());
