@@ -1,3 +1,6 @@
+// pepbut supports rust 1.26 and later; the uninhabited type (!) is not supported in that version.
+#![cfg_attr(feature = "cargo-clippy", allow(empty_enum))]
+
 use std::error::Error;
 use std::fmt::{self, Display};
 
