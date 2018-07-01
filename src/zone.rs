@@ -566,14 +566,4 @@ mod tests {
         let mut buf = Vec::new();
         zone.write_to(&mut buf).unwrap();
     }
-
-    #[cfg(feature = "zone-convert")]
-    #[test]
-    fn read_text_zone() {
-        use text_zone;
-        assert_eq!(
-            zone_example_invalid(),
-            text_zone::read(include_str!("../tests/data/example.invalid.zone.txt")).unwrap()
-        );
-    }
 }

@@ -113,3 +113,19 @@ fn main() -> Result<(), failure::Error> {
         .write_to(&mut File::create(matches.value_of("OUTPUT").unwrap())?)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use pepbut::zone::Zone;
+    use std::io::Cursor;
+
+    use super::read;
+
+    #[test]
+    fn it_works() {
+        let bin: &[u8] = include_bytes!("../../tests/data/example.invalid.zone");
+        let from_bin = Zone::read_from(&mut Cursor::new(bin)).unwrap();
+        let from_text = read(include_str!("../../tests/data/example.invalid.zone.txt")).unwrap();
+        assert_eq!(from_bin, from_text);
+    }
+}
