@@ -6,7 +6,7 @@ license = "MIT/Apache-2.0"
 autobenches = false
 
 [workspace]
-members = ["nsd", "zone-convert"]
+members = ["json-api", "nsd", "zone-convert"]
 
 [lib]
 bench = false

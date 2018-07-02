@@ -11,7 +11,10 @@ extern crate futures;
 extern crate hyper;
 #[macro_use]
 extern crate log;
+#[macro_use]
 extern crate pepbut;
+extern crate pepbut_json_api;
+extern crate regex;
 extern crate serde_json;
 extern crate tokio;
 extern crate tokio_io;
@@ -39,7 +42,6 @@ use tokio_uds::UnixListener;
 
 mod codec;
 mod ctl;
-mod never;
 
 use codec::DnsCodec;
 use ctl::ControlService;
