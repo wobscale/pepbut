@@ -16,44 +16,6 @@ use serde_json::Value;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-#[macro_use]
-mod macros {
-    macro_rules! req_try {
-        ($e:expr, $code:expr) => {{
-            match $e {
-                Ok(v) => v,
-                Err(e) => return Err(err!($code, format!("{}", e))),
-            }
-        }};
-
-        ($e:expr) => {{
-            use hyper::StatusCode;
-            req_try!($e, StatusCode::INTERNAL_SERVER_ERROR)
-        }};
-    }
-
-    macro_rules! err {
-        ($code:expr, $err:expr) => {{
-            use hyper::Response;
-            let mut response = Response::default();
-            *response.status_mut() = $code;
-            if let Ok(v) = $err.parse() {
-                response.headers_mut().insert("X-Pepbut-Error", v);
-            }
-            response
-        }};
-    }
-
-    macro_rules! code {
-        ($code:expr) => {{
-            use hyper::Response;
-            let mut response = Response::default();
-            *response.status_mut() = $code;
-            response
-        }};
-    }
-}
-
 mod ext;
 mod never;
 
@@ -73,40 +35,71 @@ fn pattern_to_regex(route: &str) -> String {
     re + "/?"
 }
 
-fn finish_response(res: Response<Option<Value>>) -> Response<Body> {
-    let mut res = res;
-    if res.body().is_some() {
-        res.headers_mut()
-            .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    }
-    res.map(|value| match value {
-        Some(value) => Body::from(format!("{:#}\n", value)),
-        None => Body::empty(),
-    })
+pub struct Error {
+    code: StatusCode,
+    msg: Option<String>,
 }
 
+impl Error {
+    pub fn new(code: StatusCode, msg: &str) -> Error {
+        Error {
+            code,
+            msg: Some(msg.to_owned()),
+        }
+    }
+
+    pub fn code(code: StatusCode) -> Error {
+        Error { code, msg: None }
+    }
+}
+
+impl<T: ::std::fmt::Display> From<T> for Error {
+    fn from(err: T) -> Error {
+        Error {
+            code: StatusCode::BAD_REQUEST,
+            msg: Some(format!("{}", err)),
+        }
+    }
+}
+
+impl From<Error> for Response<Body> {
+    fn from(err: Error) -> Response<Body> {
+        let mut response = Response::default();
+        *response.status_mut() = err.code;
+        if let Some(msg) = err.msg {
+            if let Ok(v) = msg.parse() {
+                response.headers_mut().insert("X-Pepbut-Error", v);
+            }
+        }
+        response
+    }
+}
+
+pub type HttpResult<T> = Result<T, Error>;
+pub type HttpResponse = HttpResult<Response<Option<Value>>>;
+
 pub trait Handler: Send + Sync + 'static {
-    fn handle(&self, req: Request<Body>) -> Response<Option<Value>>;
+    fn handle(&self, req: Request<Body>) -> HttpResponse;
 }
 
 impl<F> Handler for F
 where
-    F: Send + Sync + 'static + Fn(Request<Body>) -> Response<Option<Value>>,
+    F: Send + Sync + 'static + Fn(Request<Body>) -> HttpResponse,
 {
-    fn handle(&self, req: Request<Body>) -> Response<Option<Value>> {
+    fn handle(&self, req: Request<Body>) -> HttpResponse {
         (*self)(req)
     }
 }
 
 pub trait BeforeMiddleware: Send + Sync + 'static {
-    fn before(&self, req: &mut Request<Body>) -> Result<(), Response<Option<Value>>>;
+    fn before(&self, req: &mut Request<Body>) -> HttpResult<()>;
 }
 
 impl<F> BeforeMiddleware for F
 where
-    F: Send + Sync + 'static + Fn(&mut Request<Body>) -> Result<(), Response<Option<Value>>>,
+    F: Send + Sync + 'static + Fn(&mut Request<Body>) -> HttpResult<()>,
 {
-    fn before(&self, req: &mut Request<Body>) -> Result<(), Response<Option<Value>>> {
+    fn before(&self, req: &mut Request<Body>) -> HttpResult<()> {
         (*self)(req)
     }
 }
@@ -171,7 +164,7 @@ impl Service {
         self.before.push(Box::new(before))
     }
 
-    fn handle_request(&mut self, req: Request<Body>) -> Response<Body> {
+    fn handle_request(&mut self, req: Request<Body>) -> HttpResponse {
         if let Some(route) = self
             .regexes
             .matches(req.uri().path())
@@ -194,16 +187,14 @@ impl Service {
                     }
                 }
                 for f in &self.before {
-                    if let Err(res) = f.before(&mut req) {
-                        return finish_response(res);
-                    }
+                    f.before(&mut req)?;
                 }
-                finish_response((**handler).handle(req))
+                (**handler).handle(req)
             } else {
-                code!(StatusCode::METHOD_NOT_ALLOWED)
+                Err(Error::code(StatusCode::METHOD_NOT_ALLOWED))
             }
         } else {
-            code!(StatusCode::NOT_FOUND)
+            Err(Error::code(StatusCode::NOT_FOUND))
         }
     }
 }
@@ -215,7 +206,22 @@ impl hyper::service::Service for Service {
     type Future = FutureResult<Response<Body>, Never>;
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
-        future::ok(self.handle_request(req))
+        future::ok(match self.handle_request(req) {
+            Ok(res) => {
+                let mut res = res;
+                if res.body().is_some() {
+                    res.headers_mut()
+                        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+                } else {
+                    *res.status_mut() = StatusCode::NO_CONTENT;
+                }
+                res.map(|v| match v {
+                    Some(v) => Body::from(format!("{:#}\n", v)),
+                    None => Body::empty(),
+                })
+            }
+            Err(err) => err.into(),
+        })
     }
 }
 

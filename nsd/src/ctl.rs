@@ -2,18 +2,18 @@ use futures::future::FutureResult;
 use futures::IntoFuture;
 use hyper::{Body, Request, Response};
 use pepbut::authority::Authority;
-use pepbut_json_api::Service;
+use pepbut_json_api::{HttpResponse, Service};
 use regex;
 use serde_json::Value;
 use std::sync::{Arc, RwLock};
 
 #[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
-fn get_zones(req: Request<Body>) -> Response<Option<Value>> {
+fn get_zones(req: Request<Body>) -> HttpResponse {
     let authority = req
         .extensions()
         .get::<Arc<RwLock<Authority>>>()
         .unwrap_or_else(|| fatal!("unable to get authority"));
-    Response::new(Some(Value::Object(
+    Ok(Response::new(Some(Value::Object(
         authority
             .read()
             .unwrap_or_else(|_| fatal!("authority is poisoned"))
@@ -21,7 +21,7 @@ fn get_zones(req: Request<Body>) -> Response<Option<Value>> {
             .iter()
             .map(|(name, zone)| (name.to_string(), zone.serial.into()))
             .collect(),
-    )))
+    ))))
 }
 
 pub struct ControlService(Arc<RwLock<Authority>>);
