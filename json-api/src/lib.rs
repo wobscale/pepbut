@@ -3,19 +3,61 @@ extern crate hyper;
 #[macro_use]
 extern crate lazy_static;
 extern crate regex;
+extern crate serde;
 extern crate serde_json;
-
-mod never;
+extern crate serde_urlencoded;
 
 use futures::future::{self, FutureResult};
-use futures::{Future, IntoFuture, Stream};
-use hyper::header::{HeaderValue, CONTENT_LENGTH, CONTENT_TYPE};
+use futures::IntoFuture;
+use hyper::header::{HeaderValue, CONTENT_TYPE};
 use hyper::{Body, Method, Request, Response, StatusCode};
 use regex::{Regex, RegexSet};
 use serde_json::Value;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
+#[macro_use]
+mod macros {
+    macro_rules! req_try {
+        ($e:expr, $code:expr) => {{
+            match $e {
+                Ok(v) => v,
+                Err(e) => return Err(err!($code, format!("{}", e))),
+            }
+        }};
+
+        ($e:expr) => {{
+            use hyper::StatusCode;
+            req_try!($e, StatusCode::INTERNAL_SERVER_ERROR)
+        }};
+    }
+
+    macro_rules! err {
+        ($code:expr, $err:expr) => {{
+            use hyper::Response;
+            let mut response = Response::default();
+            *response.status_mut() = $code;
+            if let Ok(v) = $err.parse() {
+                response.headers_mut().insert("X-Pepbut-Error", v);
+            }
+            response
+        }};
+    }
+
+    macro_rules! code {
+        ($code:expr) => {{
+            use hyper::Response;
+            let mut response = Response::default();
+            *response.status_mut() = $code;
+            response
+        }};
+    }
+}
+
+mod ext;
+mod never;
+
+pub use ext::RequestExt;
 use never::Never;
 
 /// This method assumes that `route` starts with a `/`.
@@ -43,66 +85,28 @@ fn finish_response(res: Response<Option<Value>>) -> Response<Body> {
     })
 }
 
-macro_rules! req_try {
-    ($e:expr, $code:expr) => {{
-        match $e {
-            Ok(v) => v,
-            Err(e) => return err!($code, &format!("{}", e)),
-        }
-    }};
-
-    ($e:expr) => {{
-        use hyper::StatusCode;
-        req_try!($e, StatusCode::INTERNAL_SERVER_ERROR)
-    }};
-}
-
-macro_rules! err {
-    ($code:expr, $err:expr) => {{
-        use hyper::{header::HeaderValue, Response};
-        let mut response = Response::default();
-        *response.status_mut() = $code;
-        if let Ok(v) = HeaderValue::from_str($err) {
-            response.headers_mut().insert("X-Pepbut-Error", v);
-        }
-        response
-    }};
-}
-
-macro_rules! code {
-    ($code:expr) => {{
-        use hyper::Response;
-        let mut response = Response::default();
-        *response.status_mut() = $code;
-        response
-    }};
-}
-
 pub trait Handler: Send + Sync + 'static {
-    fn handle(&self, req: Request<Option<Value>>) -> Response<Option<Value>>;
+    fn handle(&self, req: Request<Body>) -> Response<Option<Value>>;
 }
 
 impl<F> Handler for F
 where
-    F: Send + Sync + 'static + Fn(Request<Option<Value>>) -> Response<Option<Value>>,
+    F: Send + Sync + 'static + Fn(Request<Body>) -> Response<Option<Value>>,
 {
-    fn handle(&self, req: Request<Option<Value>>) -> Response<Option<Value>> {
+    fn handle(&self, req: Request<Body>) -> Response<Option<Value>> {
         (*self)(req)
     }
 }
 
 pub trait BeforeMiddleware: Send + Sync + 'static {
-    fn before(&self, req: &mut Request<Option<Value>>) -> Result<(), Response<Option<Value>>>;
+    fn before(&self, req: &mut Request<Body>) -> Result<(), Response<Option<Value>>>;
 }
 
 impl<F> BeforeMiddleware for F
 where
-    F: Send
-        + Sync
-        + 'static
-        + Fn(&mut Request<Option<Value>>) -> Result<(), Response<Option<Value>>>,
+    F: Send + Sync + 'static + Fn(&mut Request<Body>) -> Result<(), Response<Option<Value>>>,
 {
-    fn before(&self, req: &mut Request<Option<Value>>) -> Result<(), Response<Option<Value>>> {
+    fn before(&self, req: &mut Request<Body>) -> Result<(), Response<Option<Value>>> {
         (*self)(req)
     }
 }
@@ -176,22 +180,7 @@ impl Service {
             .next()
         {
             if let Some(handler) = route.handlers.get(req.method()) {
-                let (parts, body) = req.into_parts();
-                let body = if let Some(value) = parts.headers.get(CONTENT_TYPE) {
-                    if parts.headers.get(CONTENT_LENGTH).is_none() {
-                        return code!(StatusCode::LENGTH_REQUIRED);
-                    }
-                    if value == "application/json" {
-                        Some(req_try!(serde_json::from_slice(&req_try!(
-                            body.concat2().wait()
-                        ))))
-                    } else {
-                        return err!(StatusCode::BAD_REQUEST, "only application/json is accepted");
-                    }
-                } else {
-                    None
-                };
-                let mut req = Request::from_parts(parts, body);
+                let mut req = req;
                 if let Some(ref re) = route.regex {
                     if let Some(captures) = re.captures(&req.uri().path().to_owned()) {
                         let mut matches = HashMap::new();

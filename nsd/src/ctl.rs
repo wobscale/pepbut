@@ -1,6 +1,6 @@
 use futures::future::FutureResult;
 use futures::IntoFuture;
-use hyper::{Request, Response};
+use hyper::{Body, Request, Response};
 use pepbut::authority::Authority;
 use pepbut_json_api::Service;
 use regex;
@@ -8,7 +8,7 @@ use serde_json::Value;
 use std::sync::{Arc, RwLock};
 
 #[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
-fn get_zones(req: Request<Option<Value>>) -> Response<Option<Value>> {
+fn get_zones(req: Request<Body>) -> Response<Option<Value>> {
     let authority = req
         .extensions()
         .get::<Arc<RwLock<Authority>>>()
@@ -34,7 +34,7 @@ impl ControlService {
     fn build(&self) -> Result<Service, regex::Error> {
         let authority = self.0.clone();
         let mut service = Service::builder().get("/zones", get_zones).finalize()?;
-        service.before(move |req: &mut Request<Option<Value>>| {
+        service.before(move |req: &mut Request<Body>| {
             req.extensions_mut().insert(authority.clone());
             Ok(())
         });
