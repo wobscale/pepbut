@@ -349,11 +349,11 @@ mod tests {
     #[test]
     fn create_service() {
         Service::builder()
-            .get("/hello", |_| Response::default())
-            .put("/hello", |_| Response::default())
-            .get("/hello/:id", |_| Response::default())
-            .get("/hello/goodbye", |_| Response::default())
-            .get("/hello/hello", |_| Response::default())
+            .get("/hello", |_| Ok(Response::default()))
+            .put("/hello", |_| Ok(Response::default()))
+            .get("/hello/:id", |_| Ok(Response::default()))
+            .get("/hello/goodbye", |_| Ok(Response::default()))
+            .get("/hello/hello", |_| Ok(Response::default()))
             .finalize()
             .unwrap();
     }
