@@ -56,11 +56,10 @@ fn main() -> Result<(), failure::Error> {
     ctl_socket
         .shutdown(Shutdown::Write)
         .context("Unable to shutdown write half of socket")?;
+    let response =
+        serde_json::from_reader(ctl_socket).context("Unable to read response from socket")?;
 
-    match (
-        request,
-        serde_json::from_reader(ctl_socket).context("Unable to read response from socket")?,
-    ) {
+    match (request, response) {
         (Request::ListZones, Value::Object(v)) => {
             let mut tw = TabWriter::new(io::stdout());
             for (zone, serial) in v {
