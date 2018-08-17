@@ -1,23 +1,17 @@
 #![cfg_attr(feature = "cargo-clippy", warn(clippy_pedantic))]
 #![cfg_attr(feature = "cargo-clippy", allow(use_self))]
 
-extern crate bytes;
-extern crate cast;
 extern crate clap;
 extern crate env_logger;
 #[macro_use]
 extern crate failure;
-extern crate futures;
-extern crate hyper;
 #[macro_use]
 extern crate log;
-#[macro_use]
 extern crate pepbut;
-extern crate pepbut_json_api;
-extern crate regex;
-extern crate serde_json;
+extern crate pepbut_nsd;
 extern crate tokio;
-extern crate tokio_io;
+extern crate tokio_codec;
+extern crate tokio_jsoncodec;
 extern crate tokio_signal;
 extern crate tokio_uds;
 extern crate users;
@@ -25,9 +19,9 @@ extern crate users;
 use clap::{App, Arg};
 use env_logger::Builder;
 use failure::ResultExt;
-use hyper::Server;
 use log::LevelFilter;
 use pepbut::authority::Authority;
+use pepbut_nsd::{codec::DnsCodec, ctl};
 use std::fs;
 use std::net::SocketAddr;
 use std::process;
@@ -35,16 +29,11 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::net::{TcpListener, UdpFramed, UdpSocket};
-use tokio::prelude::*;
-use tokio_io::codec::Decoder;
+use tokio::prelude::{Future, Sink, Stream};
+use tokio_codec::Decoder;
+use tokio_jsoncodec::Codec as JsonCodec;
 use tokio_signal::unix::{Signal, SIGINT, SIGTERM};
 use tokio_uds::UnixListener;
-
-mod codec;
-mod ctl;
-
-use codec::DnsCodec;
-use ctl::ControlService;
 
 static DEFAULT_LISTEN_ADDR: &str = "[::]:53";
 static DEFAULT_SOCKET_PATH: &str = "/run/pepbut/nsd.sock";
@@ -118,16 +107,20 @@ fn main() -> Result<(), failure::Error> {
         .unwrap_or(DEFAULT_LISTEN_ADDR);
     let addr = SocketAddr::from_str(addr_str)
         .context(format!("Could not parse LISTEN_ADDR: {}", addr_str))?;
-    let tcp_listener =
-        TcpListener::bind(&addr).with_context(|e| format!("Failed to bind to TCP socket: {}", e))?;
-    let udp_socket =
-        UdpSocket::bind(&addr).with_context(|e| format!("Failed to bind to UDP socket: {}", e))?;
+    let tcp_listener = TcpListener::bind(&addr)
+        .with_context(|e| format!("Failed to bind to TCP socket on {}: {}", addr, e))?;
+    let udp_socket = UdpSocket::bind(&addr)
+        .with_context(|e| format!("Failed to bind to UDP socket on {}: {}", addr, e))?;
 
     let ctl_socket_path = matches
         .value_of("socket_path")
         .unwrap_or(DEFAULT_SOCKET_PATH);
-    let ctl_listener = UnixListener::bind(ctl_socket_path)
-        .with_context(|e| format!("Failed to bind to Unix socket: {}", e))?;
+    let ctl_listener = UnixListener::bind(ctl_socket_path).with_context(|e| {
+        format!(
+            "Failed to bind to Unix socket at {}: {}",
+            ctl_socket_path, e
+        )
+    })?;
 
     info!(
         "pepbut nsd listening on {}, control socket {}, PID {}",
@@ -183,9 +176,19 @@ fn main() -> Result<(), failure::Error> {
     };
 
     let ctl_server = {
-        let authority = authority.clone();
-        Server::builder(ctl_listener.incoming())
-            .serve(move || ControlService::new(authority.clone()))
+        ctl_listener
+            .incoming()
+            .for_each(move |stream| {
+                let authority = authority.clone();
+                let (sink, stream) = JsonCodec::default().framed(stream).split();
+                tokio::spawn(
+                    sink.send_all(
+                        stream.map(move |request| ctl::handle_request(request, &authority)),
+                    ).map(|_| ())
+                        .map_err(|e| error!("error in control server: {:?}", e)),
+                );
+                Ok(())
+            })
             .map_err(|e| error!("error in control server: {:?}", e))
     };
 

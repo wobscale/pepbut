@@ -1,53 +1,27 @@
-use futures::future::FutureResult;
-use futures::IntoFuture;
-use hyper::{Body, Request, Response};
 use pepbut::authority::Authority;
-use pepbut_json_api::{HttpResponse, Service};
-use regex;
-use serde_json::Value;
+use serde::Serialize;
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-#[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
-fn get_zones(req: Request<Body>) -> HttpResponse {
-    let authority = req
-        .extensions()
-        .get::<Arc<RwLock<Authority>>>()
-        .unwrap_or_else(|| fatal!("unable to get authority"));
-    Ok(Response::new(Some(Value::Object(
-        authority
-            .read()
-            .unwrap_or_else(|_| fatal!("authority is poisoned"))
-            .zones
-            .iter()
-            .map(|(name, zone)| (name.to_string(), zone.serial.into()))
-            .collect(),
-    ))))
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "method")]
+#[serde(rename_all = "kebab-case")]
+pub enum Request {
+    ListZones,
 }
 
-pub struct ControlService(Arc<RwLock<Authority>>);
-
-impl ControlService {
-    pub fn new(authority: Arc<RwLock<Authority>>) -> ControlService {
-        ControlService(authority)
-    }
-
-    fn build(&self) -> Result<Service, regex::Error> {
-        let authority = self.0.clone();
-        let mut service = Service::builder().get("/zones", get_zones).finalize()?;
-        service.before(move |req: &mut Request<Body>| {
-            req.extensions_mut().insert(authority.clone());
-            Ok(())
-        });
-        Ok(service)
+pub fn handle_request(request: Request, authority: &Arc<RwLock<Authority>>) -> impl Serialize {
+    match request {
+        Request::ListZones => list_zones(authority),
     }
 }
 
-impl IntoFuture for ControlService {
-    type Future = FutureResult<Service, regex::Error>;
-    type Item = Service;
-    type Error = regex::Error;
-
-    fn into_future(self) -> Self::Future {
-        self.build().into()
-    }
+fn list_zones(authority: &Arc<RwLock<Authority>>) -> HashMap<String, u32> {
+    authority
+        .read()
+        .unwrap_or_else(|_| fatal!("authority is poisoned"))
+        .zones
+        .iter()
+        .map(|(name, zone)| (name.to_string(), zone.serial))
+        .collect()
 }
