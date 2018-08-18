@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Records and record data.
 
 use bytes::{BufMut, Bytes, BytesMut};

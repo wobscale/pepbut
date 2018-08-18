@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 use bytes::{Buf, BufMut, Bytes, BytesMut, IntoBuf};
 use cast::u16;
 use pepbut::wire::encode_err;

@@ -2,6 +2,7 @@
 name = "pepbut-nsd"
 version = "0.1.0"
 authors = ["iliana weller <ilianaw@buttslol.net>"]
+license = "AGPL-3.0-only"
 
 [dependencies]
 bytes = "0.4"

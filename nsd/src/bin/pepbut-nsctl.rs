@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 extern crate clap;
 #[macro_use]
 extern crate failure;

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 use bytes::{Buf, Bytes, BytesMut};
 use failure;
 use std::collections::HashMap;

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! pepbut is the code for [Wobscale](https://wobscale.website)'s authoritative DNS service.
 //!
 //! It consists of an API service for updating records, a web interface that uses the API for users

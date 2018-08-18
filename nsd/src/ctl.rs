@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 use pepbut::authority::Authority;
 use serde::Serialize;
 use std::collections::HashMap;
