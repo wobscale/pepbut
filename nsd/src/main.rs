@@ -9,10 +9,10 @@ extern crate failure;
 extern crate log;
 extern crate pepbut;
 extern crate pepbut_nsd;
+extern crate safeword;
 extern crate tokio;
 extern crate tokio_codec;
 extern crate tokio_jsoncodec;
-extern crate tokio_signal;
 extern crate tokio_uds;
 extern crate users;
 
@@ -22,17 +22,16 @@ use failure::ResultExt;
 use log::LevelFilter;
 use pepbut::authority::Authority;
 use pepbut_nsd::{codec::DnsCodec, ctl};
+use safeword::{Safeword, Shutdown};
 use std::fs;
 use std::net::SocketAddr;
 use std::process;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::net::{TcpListener, UdpFramed, UdpSocket};
-use tokio::prelude::{Future, Sink, Stream};
+use tokio::prelude::{future, Future, Sink, Stream};
 use tokio_codec::Decoder;
 use tokio_jsoncodec::Codec as JsonCodec;
-use tokio_signal::unix::{Signal, SIGINT, SIGTERM};
 use tokio_uds::UnixListener;
 
 static DEFAULT_LISTEN_ADDR: &str = "[::]:53";
@@ -139,91 +138,61 @@ fn main() -> Result<(), failure::Error> {
         }
     }
 
-    macro_rules! select {
-        ( $first:expr, $( $fut:expr ),* ) => {
-            $first
-            $(
-                .select($fut).map(|_| ()).map_err(|_| ())
-            )*
-        };
-    }
-
-    let tcp_server = {
-        let authority = authority.clone();
-        tcp_listener
-            .incoming()
-            .for_each(move |tcp| {
-                let authority = authority.clone();
-                let (sink, stream) = DnsCodec::tcp().framed(tcp).split();
-                tokio::spawn(
-                    sink.send_all(
-                        stream.map(move |b| authority.read().unwrap().process_message(b)),
-                    ).map(|_| ())
-                        .map_err(|e| error!("error in TCP server: {:?}", e)),
-                );
-                Ok(())
-            })
-            .map_err(|e| error!("error in TCP server: {:?}", e))
-    };
-
-    let udp_server = {
-        let authority = authority.clone();
-        let (sink, stream) = UdpFramed::new(udp_socket, DnsCodec::udp()).split();
-        sink.send_all(
-            stream.map(move |(b, addr)| (authority.read().unwrap().process_message(b), addr)),
-        ).map(|_| ())
-            .map_err(|e| error!("error in UDP server: {:?}", e))
-    };
-
-    let ctl_server = {
-        ctl_listener
-            .incoming()
-            .for_each(move |stream| {
-                let authority = authority.clone();
-                let (sink, stream) = JsonCodec::default().framed(stream).split();
-                tokio::spawn(
-                    sink.send_all(
-                        stream.map(move |request| ctl::handle_request(request, &authority)),
-                    ).map(|_| ())
-                        .map_err(|e| error!("error in control server: {:?}", e)),
-                );
-                Ok(())
-            })
-            .map_err(|e| error!("error in control server: {:?}", e))
-    };
-
-    let clean_shutdown = Arc::new(AtomicBool::new(false));
-    macro_rules! signal_handler {
-        ($signal:expr) => {{
-            let clean_shutdown = clean_shutdown.clone();
-            Signal::new($signal)
-                .flatten_stream()
-                .into_future()
-                .map(move |(s, _fut)| {
-                    if let Some(s) = s {
-                        info!("received signal {}, shutting down...", s);
-                    } else {
-                        error!("signal handler received None");
-                        info!("shutting down...");
-                    }
-                    clean_shutdown.store(true, Ordering::Relaxed);
+    let futs: Vec<Box<Future<Item = (), Error = ()> + Send>> = vec![
+        // TCP server
+        Box::new({
+            let authority = authority.clone();
+            tcp_listener
+                .incoming()
+                .for_each(move |tcp| {
+                    let authority = authority.clone();
+                    let (sink, stream) = DnsCodec::tcp().framed(tcp).split();
+                    tokio::spawn(
+                        sink.send_all(
+                            stream.map(move |b| authority.read().unwrap().process_message(b)),
+                        ).map(|_| ())
+                            .map_err(|e| error!("error in TCP server: {:?}", e)),
+                    );
+                    Ok(())
                 })
-                .map_err(|(e, _)| error!("error in signal handler: {:?}", e))
-        }};
-    }
+                .map_err(|e| error!("error in TCP server: {:?}", e))
+        }),
+        // UDP server
+        Box::new({
+            let authority = authority.clone();
+            let (sink, stream) = UdpFramed::new(udp_socket, DnsCodec::udp()).split();
+            sink.send_all(
+                stream.map(move |(b, addr)| (authority.read().unwrap().process_message(b), addr)),
+            ).map(|_| ())
+                .map_err(|e| error!("error in UDP server: {:?}", e))
+        }),
+        // Control server
+        Box::new({
+            ctl_listener
+                .incoming()
+                .for_each(move |stream| {
+                    let authority = authority.clone();
+                    let (sink, stream) = JsonCodec::default().framed(stream).split();
+                    tokio::spawn(
+                        sink.send_all(
+                            stream.map(move |request| ctl::handle_request(request, &authority)),
+                        ).map(|_| ())
+                            .map_err(|e| error!("error in control server: {:?}", e)),
+                    );
+                    Ok(())
+                })
+                .map_err(|e| error!("error in control server: {:?}", e))
+        }),
+    ];
 
-    tokio::run(select!(
-        tcp_server,
-        udp_server,
-        ctl_server,
-        signal_handler!(SIGINT),
-        signal_handler!(SIGTERM)
-    ));
-    if clean_shutdown.load(Ordering::Relaxed) {
+    if let Err(shutdown) = Safeword::default().run(future::select_all(futs)) {
+        match shutdown {
+            Shutdown::FutureFinished(_) | Shutdown::FutureErr(_) => bail!("unexpected shutdown!"),
+            Shutdown::NoRuntime(err) | Shutdown::SignalError(err) => Err(failure::Error::from(err)),
+        }
+    } else {
         fs::remove_file(ctl_socket_path)
             .with_context(|_| format!("failed to remove control socket {}", ctl_socket_path))?;
         Ok(())
-    } else {
-        bail!("unexpected shutdown!");
     }
 }
