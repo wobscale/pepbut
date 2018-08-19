@@ -9,6 +9,7 @@ bytes = "0.4"
 cast = "0.2"
 clap = "2.31"
 env_logger = "0.5"
+erased-serde = "0.3"
 failure = "0.1"
 log = "0.4"
 pepbut = { version = "0.1", path = "../" }

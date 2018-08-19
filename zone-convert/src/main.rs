@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-#![cfg_attr(feature = "cargo-clippy", warn(clippy_pedantic))]
-#![cfg_attr(feature = "cargo-clippy", allow(use_self))]
-
 //! RFC 1035 master file conversion for pepbut.
 //!
 //! We use trust-dns for parsing zone files because I really don't want to implement it myself, and
 //! conversions from their types to our types are not the worst.
+
+#![cfg_attr(feature = "cargo-clippy", warn(clippy_pedantic))]
+#![cfg_attr(feature = "cargo-clippy", allow(use_self))]
 
 extern crate clap;
 #[macro_use]
