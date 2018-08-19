@@ -176,7 +176,11 @@ impl FromStr for Name {
 
 impl FromIterator<Bytes> for Name {
     fn from_iter<T: IntoIterator<Item = Bytes>>(iter: T) -> Name {
-        Name(Vec::from_iter(iter))
+        Name(
+            iter.into_iter()
+                .map(|label| Bytes::from(label.to_ascii_lowercase()))
+                .collect(),
+        )
     }
 }
 
@@ -246,7 +250,7 @@ impl ProtocolDecode for Name {
                 let start = usize(buf.position());
                 let end = start + length as usize;
                 buf.advance(length as usize);
-                let label = buf.get_ref().slice(start, end);
+                let label = Bytes::from(buf.get_ref().slice(start, end).to_ascii_lowercase());
                 name.0.push(label);
             }
         }
@@ -420,7 +424,7 @@ mod tests {
     #[test]
     fn decode() {
         let mut buf = Cursor::new(Bytes::from_static(
-            b"\x07example\x07invalid\0\x04blah\xc0\x08",
+            b"\x07example\x07INVALID\0\x04blah\xc0\x08",
         ));
         assert_eq!(
             Name::decode(&mut buf).unwrap(),
@@ -485,7 +489,7 @@ mod tests {
             .unwrap()
             .encode(&mut buf, &mut names)
             .unwrap();
-        Name::from_str("ns2.example.com")
+        Name::from_str("NS2.example.com")
             .unwrap()
             .encode(&mut buf, &mut names)
             .unwrap();

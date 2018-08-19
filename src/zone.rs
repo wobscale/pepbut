@@ -141,7 +141,7 @@ impl Zone {
             let len = rmp::decode::read_str_len(reader)?;
             let s = read_exact!(reader, len)?;
             ensure!(s.len() < 64, ParseNameError::LabelTooLong(s.len()));
-            labels.push(Bytes::from(s));
+            labels.push(Bytes::from(s.to_ascii_lowercase()));
         }
 
         reader.seek(SeekFrom::Start(1))?;
