@@ -23,8 +23,6 @@ extern crate log;
 #[macro_use]
 extern crate maplit;
 extern crate rmp;
-#[cfg(feature = "zone-convert")]
-extern crate trust_dns;
 
 /// Macros used globally across pepbut.
 #[macro_use]
