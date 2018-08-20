@@ -289,12 +289,10 @@ impl ProtocolEncode for Name {
     }
 }
 
-thread_local! {
-    static LABEL_ARPA: Bytes = Bytes::from_static(b"arpa");
-    static LABEL_IN_ADDR: Bytes = Bytes::from_static(b"in-addr");
-    static LABEL_IP6: Bytes = Bytes::from_static(b"ip6");
-    static HEX_DIGITS: Bytes = Bytes::from_static(b"0123456789abcdef");
-}
+static LABEL_ARPA: &[u8] = b"arpa";
+static LABEL_IN_ADDR: &[u8] = b"in-addr";
+static LABEL_IP6: &[u8] = b"ip6";
+static HEX_DIGITS: &[u8] = b"0123456789abcdef";
 
 impl From<IpAddr> for Name {
     fn from(addr: IpAddr) -> Name {
@@ -307,37 +305,28 @@ impl From<IpAddr> for Name {
 
 impl From<Ipv4Addr> for Name {
     fn from(addr: Ipv4Addr) -> Name {
-        LABEL_ARPA.with(|arpa| {
-            LABEL_IN_ADDR.with(|in_addr| {
-                let mut name = Vec::with_capacity(6);
-                for octet in addr.octets().iter().rev() {
-                    name.push(Bytes::from(format!("{}", octet).as_bytes()));
-                }
-                name.push(in_addr.clone());
-                name.push(arpa.clone());
-                Name(name)
-            })
-        })
+        let mut name = Vec::with_capacity(6);
+        for octet in addr.octets().iter().rev() {
+            name.push(Bytes::from(format!("{}", octet).as_bytes()));
+        }
+        name.push(Bytes::from_static(LABEL_IN_ADDR));
+        name.push(Bytes::from_static(LABEL_ARPA));
+        Name(name)
     }
 }
 
 impl From<Ipv6Addr> for Name {
     fn from(addr: Ipv6Addr) -> Name {
-        LABEL_ARPA.with(|arpa| {
-            LABEL_IP6.with(|ip6| {
-                HEX_DIGITS.with(|hex| {
-                    let mut name = Vec::with_capacity(34);
-                    for octet in addr.octets().iter().rev() {
-                        let (low, high) = ((octet & 0xf) as usize, (octet >> 4) as usize);
-                        name.push(hex.slice(low, low + 1));
-                        name.push(hex.slice(high, high + 1));
-                    }
-                    name.push(ip6.clone());
-                    name.push(arpa.clone());
-                    Name(name)
-                })
-            })
-        })
+        let hex = Bytes::from_static(HEX_DIGITS);
+        let mut name = Vec::with_capacity(34);
+        for octet in addr.octets().iter().rev() {
+            let (low, high) = ((octet & 0xf) as usize, (octet >> 4) as usize);
+            name.push(hex.slice(low, low + 1));
+            name.push(hex.slice(high, high + 1));
+        }
+        name.push(Bytes::from_static(LABEL_IP6));
+        name.push(Bytes::from_static(LABEL_ARPA));
+        Name(name)
     }
 }
 
