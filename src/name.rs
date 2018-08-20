@@ -292,6 +292,16 @@ impl ProtocolEncode for Name {
 static LABEL_ARPA: &[u8] = b"arpa";
 static LABEL_IN_ADDR: &[u8] = b"in-addr";
 static LABEL_IP6: &[u8] = b"ip6";
+// This is the digits 0 through 255 concatenated
+static OCTET_DECIMAL: &[u8] =
+    b"012345678910111213141516171819202122232425262728293031323334353637383940414243444546474849505\
+      152535455565758596061626364656667686970717273747576777879808182838485868788899091929394959697\
+      989910010110210310410510610710810911011111211311411511611711811912012112212312412512612712812\
+      913013113213313413513613713813914014114214314414514614714814915015115215315415515615715815916\
+      016116216316416516616716816917017117217317417517617717817918018118218318418518618718818919019\
+      119219319419519619719819920020120220320420520620720820921021121221321421521621721821922022122\
+      222322422522622722822923023123223323423523623723823924024124224324424524624724824925025125225\
+      3254255";
 static HEX_DIGITS: &[u8] = b"0123456789abcdef";
 
 impl From<IpAddr> for Name {
@@ -305,9 +315,18 @@ impl From<IpAddr> for Name {
 
 impl From<Ipv4Addr> for Name {
     fn from(addr: Ipv4Addr) -> Name {
+        let dec = Bytes::from_static(OCTET_DECIMAL);
         let mut name = Vec::with_capacity(6);
         for octet in addr.octets().iter().rev() {
-            name.push(Bytes::from(format!("{}", octet).as_bytes()));
+            name.push(if *octet < 10 {
+                dec.slice(*octet as usize, (*octet + 1) as usize)
+            } else if *octet < 100 {
+                let x = 2 * ((*octet - 10) as usize);
+                dec.slice(x + 10, x + 12)
+            } else {
+                let x = 3 * ((*octet - 100) as usize);
+                dec.slice(x + 190, x + 193)
+            });
         }
         name.push(Bytes::from_static(LABEL_IN_ADDR));
         name.push(Bytes::from_static(LABEL_ARPA));
