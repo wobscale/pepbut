@@ -10,7 +10,6 @@ use tokio_codec::{Decoder, Encoder};
 ///
 /// TCP messages start with a 2-byte length marker, so we get to handle those differently.
 #[derive(Debug)]
-#[cfg_attr(feature = "cargo-clippy", allow(stutter))]
 pub enum DnsCodec {
     Tcp { len: Option<u16> },
     Udp,

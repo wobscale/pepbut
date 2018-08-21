@@ -15,7 +15,6 @@ use name::Name;
 use wire::ProtocolEncode;
 use Msgpack;
 
-#[cfg_attr(feature = "cargo-clippy", allow(stutter))]
 pub trait RecordTrait {
     /// The name the record belongs to.
     fn name(&self) -> &Name;

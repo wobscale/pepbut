@@ -10,7 +10,7 @@
 //! project, and that support for record types is purposely limited.
 
 #![cfg_attr(feature = "cargo-clippy", warn(clippy_pedantic))]
-#![cfg_attr(feature = "cargo-clippy", allow(use_self))]
+#![cfg_attr(feature = "cargo-clippy", allow(use_self, stutter))]
 
 extern crate bytes;
 extern crate cast;

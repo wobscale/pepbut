@@ -6,7 +6,7 @@
 //! conversions from their types to our types are not the worst.
 
 #![cfg_attr(feature = "cargo-clippy", warn(clippy_pedantic))]
-#![cfg_attr(feature = "cargo-clippy", allow(use_self))]
+#![cfg_attr(feature = "cargo-clippy", allow(use_self, stutter))]
 
 extern crate clap;
 #[macro_use]
