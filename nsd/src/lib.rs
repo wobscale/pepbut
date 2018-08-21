@@ -9,12 +9,18 @@ extern crate erased_serde;
 extern crate failure;
 #[macro_use]
 extern crate log;
-#[macro_use]
 extern crate pepbut;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 extern crate tokio_codec;
+
+macro_rules! fatal {
+    ($msg:expr) => {{
+        error!("fatal error, cannot recover: {}", $msg);
+        ::std::process::exit(1);
+    }};
+}
 
 pub mod codec;
 pub mod ctl;

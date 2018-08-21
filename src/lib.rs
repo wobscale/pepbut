@@ -27,14 +27,6 @@ extern crate rmp;
 /// Macros used globally across pepbut.
 #[macro_use]
 mod macros {
-    #[macro_export]
-    macro_rules! fatal {
-        ($msg:expr) => {{
-            error!("fatal error, cannot recover: {}", $msg);
-            ::std::process::exit(1);
-        }};
-    }
-
     macro_rules! read_exact {
         ($r:expr, $c:expr) => {{
             #[allow(unused_imports)]
