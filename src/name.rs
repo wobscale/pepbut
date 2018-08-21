@@ -2,6 +2,16 @@
 
 //! Domain names and labels.
 
+// Internals note: there's some deliberate inconsistency into what gets lowercased and what doesn't
+// when creating Name structs. The goal is that authoritative uses are always lowercase, but
+// non-authoritative uses such as requests are not.
+//
+// Name::from_str and Msgpack::from_msgpack always lowercase; ProtocolDecode::decode does not, as a
+// wire client might expect the response to have the same name case as the request.
+// FromIterator<Bytes> for Name expects the caller to make an appropriate decision.
+//
+// PartialEq / Eq / Hash are written in a case-insensitive manner.
+
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use cast::{self, u16, u32, u8, usize};
 use failure;
@@ -10,6 +20,7 @@ use rmp;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
+use std::hash;
 use std::io::{Cursor, Read, Write};
 use std::iter::FromIterator;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -20,7 +31,7 @@ use Msgpack;
 
 /// Errors that can occur while parsing a `Name`.
 #[derive(Debug, Fail)]
-pub enum ParseNameError {
+pub enum NameParseError {
     /// The label is empty.
     #[fail(display = "empty label")]
     EmptyLabel,
@@ -34,19 +45,19 @@ pub enum ParseNameError {
 
 /// Validates and constructs a label from a string. This method normalizes the label to
 /// lowercase ASCII, converting non-ASCII characters into Punycode according to UTS #46.
-fn label_from_str(s: &str) -> Result<Bytes, ParseNameError> {
+fn label_from_str(s: &str) -> Result<Bytes, NameParseError> {
     /// Checks if a byte is valid for a DNS label.
     fn byte_ok(b: u8) -> bool {
         b.is_ascii_alphanumeric() || b == b'-'
     }
 
     if s.is_empty() {
-        Err(ParseNameError::EmptyLabel)
+        Err(NameParseError::EmptyLabel)
     } else if (s.starts_with('_') && s.bytes().skip(1).all(byte_ok)) || s.bytes().all(byte_ok) {
         if s.len() > 63 {
-            Err(ParseNameError::LabelTooLong(s.len()))
+            Err(NameParseError::LabelTooLong(s.len()))
         } else {
-            Ok(Bytes::from(s.to_lowercase().as_bytes()))
+            Ok(Bytes::from(s.to_lowercase()))
         }
     } else {
         let s = uts46::to_ascii(
@@ -56,9 +67,9 @@ fn label_from_str(s: &str) -> Result<Bytes, ParseNameError> {
                 transitional_processing: true,
                 verify_dns_length: true,
             },
-        ).map_err(ParseNameError::InvalidLabel)?;
+        ).map_err(NameParseError::InvalidLabel)?;
         if s.len() > 63 {
-            Err(ParseNameError::LabelTooLong(s.len()))
+            Err(NameParseError::LabelTooLong(s.len()))
         } else {
             Ok(Bytes::from(s))
         }
@@ -72,9 +83,9 @@ fn label_from_str(s: &str) -> Result<Bytes, ParseNameError> {
 ///
 /// A domain name is fully-qualified if the rightmost label is a top-level domain.
 ///
-/// Labels in pepbut are [`Bytes`]. The byte arrays always represent the canonical representation
-/// of a label (the result of [UTS #46][uts46] processing, commonly the lowercase ASCII/Punycode
-/// form).
+/// Labels in pepbut are [`Bytes`]. The byte arrays always represent the ASCII/Punycode
+/// representation of a label (the result of [UTS #46][uts46] processing). Labels may contain
+/// mixed-case characters but are always hashed and compared as lowercase.
 ///
 /// [uts46]: https://www.unicode.org/reports/tr46/
 ///
@@ -85,7 +96,7 @@ fn label_from_str(s: &str) -> Result<Bytes, ParseNameError> {
 /// Because the labels are reference-counted byte arrays, we can more efficiently copy the normally
 /// repetitive origins of names without having to handle whether or not domains are fully-qualified
 /// or not.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Name(Vec<Bytes>);
 
 impl Name {
@@ -135,6 +146,39 @@ impl Name {
     }
 }
 
+fn eq_lower(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b.iter()).all(|(a, b)| match (*a, *b) {
+        (a, b) if a == b => true,
+        (a, b) if b'a' <= a && a <= b'z' && b'A' <= b && b <= b'Z' => a == (b | 0x20),
+        (a, b) if b'A' <= a && a <= b'Z' && b'a' <= b && b <= b'z' => (a | 0x20) == b,
+        _ => false,
+    })
+}
+
+impl PartialEq for Name {
+    fn eq(&self, rhs: &Name) -> bool {
+        if self.0.len() != rhs.0.len() {
+            return false;
+        }
+        self.0.iter().zip(rhs.0.iter()).all(|(a, b)| eq_lower(a, b))
+    }
+}
+
+impl Eq for Name {}
+
+impl hash::Hash for Name {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        // See impl<T: Hash> Hash for [T]
+        self.0.len().hash(state);
+        for label in &self.0 {
+            label.to_ascii_lowercase().as_slice().hash(state);
+        }
+    }
+}
+
 impl fmt::Display for Name {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for (i, label) in self.0.iter().enumerate() {
@@ -159,9 +203,9 @@ impl fmt::Display for Name {
 }
 
 impl FromStr for Name {
-    type Err = ParseNameError;
+    type Err = NameParseError;
 
-    fn from_str(s: &str) -> Result<Name, ParseNameError> {
+    fn from_str(s: &str) -> Result<Name, NameParseError> {
         Ok(Name(
             (if s.ends_with('.') {
                 s.split_at(s.len() - 1).0
@@ -176,11 +220,7 @@ impl FromStr for Name {
 
 impl FromIterator<Bytes> for Name {
     fn from_iter<T: IntoIterator<Item = Bytes>>(iter: T) -> Name {
-        Name(
-            iter.into_iter()
-                .map(|label| Bytes::from(label.to_ascii_lowercase()))
-                .collect(),
-        )
+        Name(iter.into_iter().collect())
     }
 }
 
@@ -250,8 +290,7 @@ impl ProtocolDecode for Name {
                 let start = usize(buf.position());
                 let end = start + length as usize;
                 buf.advance(length as usize);
-                let label = Bytes::from(buf.get_ref().slice(start, end).to_ascii_lowercase());
-                name.0.push(label);
+                name.0.push(buf.get_ref().slice(start, end))
             }
         }
     }
@@ -362,7 +401,11 @@ mod tests {
 
     macro_rules! label {
         ($e:expr) => {
-            label_from_str($e).unwrap()
+            if $e.is_ascii() {
+                Bytes::from_static($e.as_bytes())
+            } else {
+                label_from_str($e).unwrap()
+            }
         };
     }
 
@@ -402,30 +445,33 @@ mod tests {
     #[test]
     fn from_str() {
         assert_eq!(
-            Name::from_str("buttslol.net.").unwrap(),
-            Name(vec![label!("buttslol"), label!("net")])
+            Name::from_str("buttslol.net.").unwrap().0,
+            Name(vec![label!("buttslol"), label!("net")]).0
         );
         assert_eq!(
-            Name::from_str("BUTTSLOL.net.").unwrap(),
-            Name(vec![label!("buttslol"), label!("net")])
-        );
-        assert_eq!(Name::from_str("tld").unwrap(), Name(vec![label!("tld")]));
-        assert_eq!(
-            Name::from_str("☃.net.").unwrap(),
-            Name(vec![label!("☃"), label!("net")])
+            Name::from_str("BUTTSLOL.net.").unwrap().0,
+            Name(vec![label!("buttslol"), label!("net")]).0
         );
         assert_eq!(
-            Name::from_str("EXAMPLE-☃.net.").unwrap(),
-            Name(vec![label!("example-☃"), label!("net")])
+            Name::from_str("tld").unwrap().0,
+            Name(vec![label!("tld")]).0
         );
         assert_eq!(
-            Name::from_str("_sip._udp.wobscale.website").unwrap(),
+            Name::from_str("☃.net.").unwrap().0,
+            Name(vec![label!("☃"), label!("net")]).0
+        );
+        assert_eq!(
+            Name::from_str("EXAMPLE-☃.net.").unwrap().0,
+            Name(vec![label!("example-☃"), label!("net")]).0
+        );
+        assert_eq!(
+            Name::from_str("_sip._udp.wobscale.website").unwrap().0,
             Name(vec![
                 label!("_sip"),
                 label!("_udp"),
                 label!("wobscale"),
                 label!("website"),
-            ])
+            ]).0
         );
     }
 
@@ -435,13 +481,13 @@ mod tests {
             b"\x07example\x07INVALID\0\x04blah\xc0\x08",
         ));
         assert_eq!(
-            Name::decode(&mut buf).unwrap(),
-            Name(vec![label!("example"), label!("invalid")])
+            Name::decode(&mut buf).unwrap().0,
+            Name(vec![label!("example"), label!("INVALID")]).0
         );
         assert_eq!(buf.position(), 17);
         assert_eq!(
-            Name::decode(&mut buf).unwrap(),
-            Name(vec![label!("blah"), label!("invalid")])
+            Name::decode(&mut buf).unwrap().0,
+            Name(vec![label!("blah"), label!("INVALID")]).0
         );
         assert_eq!(buf.position(), 24);
     }
@@ -497,13 +543,12 @@ mod tests {
             .unwrap()
             .encode(&mut buf, &mut names)
             .unwrap();
-        Name::from_str("NS2.example.com")
-            .unwrap()
+        Name(vec![label!("NS2"), label!("example"), label!("com")])
             .encode(&mut buf, &mut names)
             .unwrap();
         assert_eq!(
             buf,
-            Bytes::from_static(b"\x03ns1\x07example\x03com\x00\x03ns2\xc0\x04")
+            Bytes::from_static(b"\x03ns1\x07example\x03com\x00\x03NS2\xc0\x04")
         );
         assert_eq!(
             names,

@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::str::FromStr;
 
-use name::{Name, ParseNameError};
+use name::{Name, NameParseError};
 use record::{Record, RecordTrait};
 use wire::ProtocolEncode;
 use Msgpack;
@@ -140,7 +140,7 @@ impl Zone {
         for _ in 0..label_len {
             let len = rmp::decode::read_str_len(reader)?;
             let s = read_exact!(reader, len)?;
-            ensure!(s.len() < 64, ParseNameError::LabelTooLong(s.len()));
+            ensure!(s.len() < 64, NameParseError::LabelTooLong(s.len()));
             labels.push(Bytes::from(s.to_ascii_lowercase()));
         }
 
