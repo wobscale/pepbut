@@ -24,28 +24,15 @@ extern crate log;
 extern crate maplit;
 extern crate rmp;
 
-/// Macros used globally across pepbut.
-#[macro_use]
-mod macros {
-    macro_rules! read_exact {
-        ($r:expr, $c:expr) => {{
-            #[allow(unused_imports)]
-            use std::io::Read;
+macro_rules! read_exact {
+    ($r:expr, $c:expr) => {{
+        #[allow(unused_imports)]
+        use std::io::Read;
 
-            let mut buf = Vec::with_capacity($c as usize);
-            buf.resize($c as usize, 0);
-            $r.read_exact(&mut buf[..]).map(|()| buf)
-        }};
-    }
-
-    #[cfg(test)]
-    mod tests {
-        #[test]
-        fn read_exact() {
-            assert_eq!(read_exact!(&b"hello world"[..], 5).unwrap(), b"hello");
-            assert!(read_exact!(&b"hello world"[..], 15).is_err());
-        }
-    }
+        let mut buf = Vec::with_capacity($c as usize);
+        buf.resize($c as usize, 0);
+        $r.read_exact(&mut buf[..]).map(|()| buf)
+    }};
 }
 
 pub mod authority;
@@ -65,4 +52,13 @@ trait Msgpack: Sized {
 
     /// Serialize this object to a MessagePack reader.
     fn to_msgpack(&self, &mut impl Write, labels: &mut Vec<Bytes>) -> Result<(), failure::Error>;
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn read_exact() {
+        assert_eq!(read_exact!(&b"hello world"[..], 5).unwrap(), b"hello");
+        assert!(read_exact!(&b"hello world"[..], 15).is_err());
+    }
 }
