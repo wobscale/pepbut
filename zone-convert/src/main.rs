@@ -46,11 +46,11 @@ impl Error for TrustDnsParseError {
 
 #[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
 fn from_name(name: TrustDnsName) -> Name {
-    Name::from_iter(name.into_iter().map(|b| b.into()))
+    from_lower(LowerName::from(name))
 }
 
 fn from_lower(name: LowerName) -> Name {
-    from_name(TrustDnsName::from(name))
+    Name::from_iter(TrustDnsName::from(name).into_iter().map(|b| b.into()))
 }
 
 pub fn read(s: &str) -> Result<Zone, failure::Error> {

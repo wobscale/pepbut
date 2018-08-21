@@ -6,7 +6,8 @@ $TTL 300
                 IN  MX      10 mx1.mail.invalid.
                 IN  MX      20 mx2.mail.invalid.
                 IN  TXT     "v=spf1 -all"
-www             IN  A       192.0.2.1
+WWW             IN  A       192.0.2.1
                 IN  AAAA    2001:db8::1
+www2            IN  CNAME   www
 xn--n3h         IN  CNAME   d1234567890.cloudfront.invalid.
 _sip._tcp       IN  SRV     0 5 5060 sip

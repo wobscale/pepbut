@@ -428,6 +428,10 @@ mod tests {
                     RData::AAAA([0x2001, 0xdb8, 0, 0, 0, 0, 0, 1].into())
                 ),
                 r!(
+                    name!("www2"),
+                    RData::CNAME(Name::from_str("www.example.invalid").unwrap())
+                ),
+                r!(
                     name!("☃"),
                     RData::CNAME(Name::from_str("d1234567890.cloudfront.invalid").unwrap())
                 ),
@@ -520,7 +524,7 @@ mod tests {
 
     #[test]
     fn len_example_invalid() {
-        assert_eq!(zone_example_invalid().len(), 9);
+        assert_eq!(zone_example_invalid().len(), 10);
     }
 
     #[test]
