@@ -16,6 +16,7 @@ name = "bench_main"
 harness = false
 
 [profile.release]
+debug = true
 lto = true
 
 [dependencies]
