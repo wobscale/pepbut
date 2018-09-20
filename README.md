@@ -8,7 +8,7 @@ It is in development and should not be used in production.
 
 Some of the implementation is inspired by [TRust-DNS](https://github.com/bluejekyll/trust-dns).
 
-pepbut requires Rust 1.26 or later to build (`conservative_impl_trait` stabilization).
+pepbut requires Rust 1.27 or later to build.
 
 ## Goals and non-goals
 
