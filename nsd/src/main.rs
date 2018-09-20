@@ -50,10 +50,8 @@ fn main() -> Result<(), failure::Error> {
                 .help(&format!(
                     "ipaddr:port to listen on (default {})",
                     DEFAULT_LISTEN_ADDR
-                ))
-                .takes_value(true),
-        )
-        .arg(
+                )).takes_value(true),
+        ).arg(
             Arg::with_name("socket_path")
                 .short("s")
                 .long("socket")
@@ -61,21 +59,17 @@ fn main() -> Result<(), failure::Error> {
                 .help(&format!(
                     "Unix control socket to listen on (default {})",
                     DEFAULT_SOCKET_PATH
-                ))
-                .takes_value(true),
-        )
-        .arg(
+                )).takes_value(true),
+        ).arg(
             Arg::with_name("verbose")
                 .short("v")
                 .multiple(true)
                 .help("Sets verbosity level (max: -vvv)"),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("ZONEFILE")
                 .help("Zone files to load on start")
                 .multiple(true),
-        )
-        .get_matches();
+        ).get_matches();
 
     // Set log level from -v option
     {
@@ -153,11 +147,10 @@ fn main() -> Result<(), failure::Error> {
                         sink.send_all(
                             stream.map(move |b| authority.read().unwrap().process_message(b)),
                         ).map(|_| ())
-                            .map_err(|e| error!("error in TCP server: {:?}", e)),
+                        .map_err(|e| error!("error in TCP server: {:?}", e)),
                     );
                     Ok(())
-                })
-                .map_err(|e| error!("error in TCP server: {:?}", e))
+                }).map_err(|e| error!("error in TCP server: {:?}", e))
         }),
         // UDP server
         Box::new({
@@ -166,7 +159,7 @@ fn main() -> Result<(), failure::Error> {
             sink.send_all(
                 stream.map(move |(b, addr)| (authority.read().unwrap().process_message(b), addr)),
             ).map(|_| ())
-                .map_err(|e| error!("error in UDP server: {:?}", e))
+            .map_err(|e| error!("error in UDP server: {:?}", e))
         }),
         // Control server
         Box::new({
@@ -179,11 +172,10 @@ fn main() -> Result<(), failure::Error> {
                         sink.send_all(
                             stream.map(move |request| ctl::handle_request(request, &authority)),
                         ).map(|_| ())
-                            .map_err(|e| error!("error in control server: {:?}", e)),
+                        .map_err(|e| error!("error in control server: {:?}", e)),
                     );
                     Ok(())
-                })
-                .map_err(|e| error!("error in control server: {:?}", e))
+                }).map_err(|e| error!("error in control server: {:?}", e))
         }),
     ];
 

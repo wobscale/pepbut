@@ -32,10 +32,8 @@ fn main() -> Result<(), failure::Error> {
                 .help(&format!(
                     "Unix control socket to listen on (default {})",
                     DEFAULT_SOCKET_PATH
-                ))
-                .takes_value(true),
-        )
-        .subcommand(SubCommand::with_name("list-zones").about("List loaded zones"))
+                )).takes_value(true),
+        ).subcommand(SubCommand::with_name("list-zones").about("List loaded zones"))
         .subcommand(
             SubCommand::with_name("load-zone")
                 .about("Load zone from a file")
@@ -46,8 +44,7 @@ fn main() -> Result<(), failure::Error> {
                         .takes_value(true)
                         .required(true),
                 ),
-        )
-        .get_matches();
+        ).get_matches();
     if matches.subcommand_name().is_none() {
         eprintln!("error: a subcommand is required\n");
         eprintln!("{}", matches.usage());

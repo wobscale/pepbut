@@ -272,7 +272,7 @@ mod tests {
                 RData::A([216, 58, 211, 142].into()),
             )]),
         }.encode(&mut buf, &mut names)
-            .unwrap();
+        .unwrap();
         assert_eq!(
             buf,
             vec![

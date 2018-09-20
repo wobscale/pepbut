@@ -212,8 +212,8 @@ impl FromStr for Name {
             } else {
                 s
             }).split('.')
-                .map(label_from_str)
-                .collect::<Result<Vec<_>, _>>()?,
+            .map(label_from_str)
+            .collect::<Result<Vec<_>, _>>()?,
         ))
     }
 }
@@ -307,7 +307,11 @@ impl ProtocolEncode for Name {
             let maybe_pos = names.get(&name).cloned();
             if let Some(pos) = maybe_pos {
                 buf.reserve(2);
-                buf.put_u16_be(0xc000_u16.checked_add(pos).ok_or(::cast::Error::Underflow)?);
+                buf.put_u16_be(
+                    0xc000_u16
+                        .checked_add(pos)
+                        .ok_or(::cast::Error::Underflow)?,
+                );
                 return Ok(());
             } else {
                 names.insert(name.clone(), u16(buf.len())?);
