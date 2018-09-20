@@ -6,8 +6,8 @@
 // when creating Name structs. The goal is that authoritative uses are always lowercase, but
 // non-authoritative uses such as requests are not.
 //
-// Name::from_str and Msgpack::from_msgpack always lowercase; ProtocolDecode::decode does not, as a
-// wire client might expect the response to have the same name case as the request.
+// Name::from_str and Msgpack::from_msgpack always lowercase labels; ProtocolDecode::decode does
+// not, as a wire client might expect the response to have the same name case as the request.
 // FromIterator<Bytes> for Name expects the caller to make an appropriate decision.
 //
 // PartialEq / Eq / Hash are written in a case-insensitive manner.
@@ -17,12 +17,15 @@ use cast::{self, u16, u32, u8, usize};
 use failure;
 use idna::uts46;
 use rmp;
+use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
+use std::convert::AsRef;
 use std::fmt;
 use std::hash;
 use std::io::{Cursor, Read, Write};
 use std::iter::FromIterator;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::ops::Deref;
 use std::str::{self, FromStr};
 
 use msgpack::Msgpack;
@@ -56,7 +59,7 @@ fn label_from_str(s: &str) -> Result<Bytes, NameParseError> {
         if s.len() > 63 {
             Err(NameParseError::LabelTooLong(s.len()))
         } else {
-            Ok(Bytes::from(s.to_lowercase()))
+            Ok(s.bytes().map(|b| b.to_ascii_lowercase()).collect())
         }
     } else {
         let s = uts46::to_ascii(
@@ -77,48 +80,59 @@ fn label_from_str(s: &str) -> Result<Bytes, NameParseError> {
 
 /// A fully-qualified domain name.
 ///
-/// Domain names are made up of labels. For the domain name `example.invalid`, there are two
-/// labels, `example` and `invalid`.
+/// Domain names are made up of labels. For the domain name `example.invalid` there are two labels,
+/// `example` and `invalid`.
 ///
 /// A domain name is fully-qualified if the rightmost label is a top-level domain.
 ///
 /// Labels in pepbut are [`Bytes`]. The byte arrays always represent the ASCII/Punycode
 /// representation of a label (the result of [UTS #46][uts46] processing). Labels may contain
-/// mixed-case characters but are always hashed and compared as lowercase.
+/// mixed-case characters but are always compared case-insensitively hashed as lowercase.
 ///
 /// [uts46]: https://www.unicode.org/reports/tr46/
 ///
-/// Making the byte arrays reference-counted is part of making the pepbut name server more memory
-/// efficient. The other part is `Zone`'s packing of labels by reference, allowing each label to be
-/// stored in memory exactly once per zone when read from a zone file.
+/// ```
+/// use pepbut::name::Name;
+/// use std::str::FromStr;
 ///
-/// Because the labels are reference-counted byte arrays, we can more efficiently copy the normally
-/// repetitive origins of names without having to handle whether or not domains are fully-qualified
-/// or not.
-#[derive(Clone, Debug)]
+/// let name = Name::from(vec!["EXAMPLE".into(), "INVALID".into()]);
+/// let another = Name::from_str("example.invalid").unwrap();
+/// assert_eq!(name, another);
+/// ```
+///
+/// ## A note on binary names / RFC 2181 § 11
+///
+/// `Name` does not support arbitrary binary data.
+///
+/// [RFC 2181 § 11](https://tools.ietf.org/html/rfc2181#section-11) states:
+///
+/// > The DNS itself places only one restriction on the particular labels that can be used to
+/// > identify resource records. That one restriction relates to the length of the label and the
+/// > full name. The length of any one label is limited to between 1 and 63 octets. A full domain
+/// > name is limited to 255 octets (including the separators). The zero length full name is
+/// > defined as representing the root of the DNS tree, and is typically written and displayed as
+/// > ".". Those restrictions aside, any binary string whatever can be used as the label of any
+/// > resource record.
+///
+/// However, DNS servers are also expected to make case-insensitive matches on record names, and we
+/// believe that is more important than binary names. If arbitrary binary data is used as a name
+/// and any of the bytes happen to be ASCII lowercase letters, data corruption *will* occur.
+#[derive(Clone, Debug, Default)]
 pub struct Name(Vec<Bytes>);
 
 impl Name {
-    /// Clones and appends all labels in an origin `Name` to this `Name`.
-    pub fn extend(&mut self, origin: &Name) {
-        self.0.extend(origin.0.iter().cloned())
-    }
-
-    /// Returns a cloned Name, skipping the first label.
+    /// Returns a cloned name, skipping the first label.
     pub fn pop(&self) -> Name {
         Name(self.0.iter().skip(1).cloned().collect())
     }
 
-    /// Returns the number of labels in the Name.
-    pub fn len(&self) -> usize {
-        self.0.len()
+    /// Extracts a slice of the labels in the name.
+    pub fn as_slice(&self) -> &[Bytes] {
+        self.0.as_slice()
     }
 
-    /// Returns if the Name is empty (the root name).
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
+    /// Determine the number of bytes it will take to encode this label in a DNS message,
+    /// accounting for name compression.
     pub(crate) fn encode_len(
         &self,
         names: &HashSet<Name>,
@@ -146,23 +160,56 @@ impl Name {
 }
 
 fn eq_lower(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    a.iter().zip(b.iter()).all(|(a, b)| match (*a, *b) {
-        (a, b) if a == b => true,
-        (a, b) if b'a' <= a && a <= b'z' && b'A' <= b && b <= b'Z' => a == (b | 0x20),
-        (a, b) if b'A' <= a && a <= b'Z' && b'a' <= b && b <= b'z' => (a | 0x20) == b,
-        _ => false,
+    a.len() == b.len() && a.iter().zip(b.iter()).all(|(a, b)| {
+        a == b || ((a | 0x20) == (b | 0x20) && a.is_ascii_alphabetic() && b.is_ascii_alphabetic())
     })
+}
+
+macro_rules! eq_impl {
+    ($a:expr, $b:expr) => {{
+        $a.len() == $b.len() && $a.iter().zip($b.iter()).all(|(a, b)| eq_lower(a, b))
+    }};
 }
 
 impl PartialEq for Name {
     fn eq(&self, rhs: &Name) -> bool {
-        if self.0.len() != rhs.0.len() {
-            return false;
-        }
-        self.0.iter().zip(rhs.0.iter()).all(|(a, b)| eq_lower(a, b))
+        eq_impl!(self.0, rhs.0)
+    }
+}
+
+impl PartialEq<Vec<Bytes>> for Name {
+    fn eq(&self, rhs: &Vec<Bytes>) -> bool {
+        eq_impl!(self.0, rhs)
+    }
+}
+
+impl PartialEq<Vec<Vec<u8>>> for Name {
+    fn eq(&self, rhs: &Vec<Vec<u8>>) -> bool {
+        eq_impl!(self.0, rhs)
+    }
+}
+
+impl<'a> PartialEq<Vec<&'a [u8]>> for Name {
+    fn eq(&self, rhs: &Vec<&'a [u8]>) -> bool {
+        eq_impl!(self.0, rhs)
+    }
+}
+
+impl PartialEq<[Bytes]> for Name {
+    fn eq(&self, rhs: &[Bytes]) -> bool {
+        eq_impl!(self.0, rhs)
+    }
+}
+
+impl PartialEq<[Vec<u8>]> for Name {
+    fn eq(&self, rhs: &[Vec<u8>]) -> bool {
+        eq_impl!(self.0, rhs)
+    }
+}
+
+impl<'a> PartialEq<[&'a [u8]]> for Name {
+    fn eq(&self, rhs: &[&'a [u8]]) -> bool {
+        eq_impl!(self.0, rhs)
     }
 }
 
@@ -201,10 +248,184 @@ impl fmt::Display for Name {
     }
 }
 
+impl AsRef<[Bytes]> for Name {
+    fn as_ref(&self) -> &[Bytes] {
+        self.0.as_ref()
+    }
+}
+
+impl AsRef<Vec<Bytes>> for Name {
+    fn as_ref(&self) -> &Vec<Bytes> {
+        self.0.as_ref()
+    }
+}
+
+impl Borrow<[Bytes]> for Name {
+    fn borrow(&self) -> &[Bytes] {
+        self.0.borrow()
+    }
+}
+
+impl Deref for Name {
+    type Target = [Bytes];
+
+    fn deref(&self) -> &[Bytes] {
+        self.0.deref()
+    }
+}
+
+impl Extend<Bytes> for Name {
+    fn extend<T: IntoIterator<Item = Bytes>>(&mut self, iter: T) {
+        self.0.extend(iter)
+    }
+}
+
+impl<'a> Extend<&'a Bytes> for Name {
+    fn extend<T: IntoIterator<Item = &'a Bytes>>(&mut self, iter: T) {
+        self.0.extend(iter.into_iter().cloned())
+    }
+}
+
+impl From<Vec<Bytes>> for Name {
+    fn from(v: Vec<Bytes>) -> Name {
+        Name(v)
+    }
+}
+
+impl<'a> From<&'a [Bytes]> for Name {
+    fn from(v: &'a [Bytes]) -> Name {
+        Name(v.to_vec())
+    }
+}
+
+impl From<Name> for Vec<Bytes> {
+    fn from(name: Name) -> Vec<Bytes> {
+        name.0
+    }
+}
+
+static LABEL_ARPA: &[u8] = b"arpa";
+static LABEL_IN_ADDR: &[u8] = b"in-addr";
+static LABEL_IP6: &[u8] = b"ip6";
+static HEX_DIGITS: [&'static [u8; 1]; 16] = [
+    b"0", b"1", b"2", b"3", b"4", b"5", b"6", b"7", b"8", b"9", b"a", b"b", b"c", b"d", b"e", b"f",
+];
+static OCTET_DECIMAL_2: [&'static [u8; 2]; 90] = [
+    b"10", b"11", b"12", b"13", b"14", b"15", b"16", b"17", b"18", b"19", b"20", b"21", b"22",
+    b"23", b"24", b"25", b"26", b"27", b"28", b"29", b"30", b"31", b"32", b"33", b"34", b"35",
+    b"36", b"37", b"38", b"39", b"40", b"41", b"42", b"43", b"44", b"45", b"46", b"47", b"48",
+    b"49", b"50", b"51", b"52", b"53", b"54", b"55", b"56", b"57", b"58", b"59", b"60", b"61",
+    b"62", b"63", b"64", b"65", b"66", b"67", b"68", b"69", b"70", b"71", b"72", b"73", b"74",
+    b"75", b"76", b"77", b"78", b"79", b"80", b"81", b"82", b"83", b"84", b"85", b"86", b"87",
+    b"88", b"89", b"90", b"91", b"92", b"93", b"94", b"95", b"96", b"97", b"98", b"99",
+];
+static OCTET_DECIMAL_3: [&'static [u8; 3]; 156] = [
+    b"100", b"101", b"102", b"103", b"104", b"105", b"106", b"107", b"108", b"109", b"110", b"111",
+    b"112", b"113", b"114", b"115", b"116", b"117", b"118", b"119", b"120", b"121", b"122", b"123",
+    b"124", b"125", b"126", b"127", b"128", b"129", b"130", b"131", b"132", b"133", b"134", b"135",
+    b"136", b"137", b"138", b"139", b"140", b"141", b"142", b"143", b"144", b"145", b"146", b"147",
+    b"148", b"149", b"150", b"151", b"152", b"153", b"154", b"155", b"156", b"157", b"158", b"159",
+    b"160", b"161", b"162", b"163", b"164", b"165", b"166", b"167", b"168", b"169", b"170", b"171",
+    b"172", b"173", b"174", b"175", b"176", b"177", b"178", b"179", b"180", b"181", b"182", b"183",
+    b"184", b"185", b"186", b"187", b"188", b"189", b"190", b"191", b"192", b"193", b"194", b"195",
+    b"196", b"197", b"198", b"199", b"200", b"201", b"202", b"203", b"204", b"205", b"206", b"207",
+    b"208", b"209", b"210", b"211", b"212", b"213", b"214", b"215", b"216", b"217", b"218", b"219",
+    b"220", b"221", b"222", b"223", b"224", b"225", b"226", b"227", b"228", b"229", b"230", b"231",
+    b"232", b"233", b"234", b"235", b"236", b"237", b"238", b"239", b"240", b"241", b"242", b"243",
+    b"244", b"245", b"246", b"247", b"248", b"249", b"250", b"251", b"252", b"253", b"254", b"255",
+];
+
+impl From<IpAddr> for Name {
+    fn from(addr: IpAddr) -> Name {
+        match addr {
+            IpAddr::V4(a) => a.into(),
+            IpAddr::V6(a) => a.into(),
+        }
+    }
+}
+
+#[cfg_attr(feature = "cargo-clippy", allow(indexing_slicing))]
+impl From<Ipv4Addr> for Name {
+    fn from(addr: Ipv4Addr) -> Name {
+        macro_rules! idx {
+            ($idx:expr) => {
+                Bytes::from_static(match $idx {
+                    0...9 => HEX_DIGITS[$idx as usize],
+                    10...99 => OCTET_DECIMAL_2[($idx - 10) as usize],
+                    100...255 => OCTET_DECIMAL_3[($idx - 100) as usize],
+                    _ => unreachable!(),
+                })
+            };
+        }
+
+        let octets = addr.octets();
+        Name(vec![
+            idx!(octets[3]),
+            idx!(octets[2]),
+            idx!(octets[1]),
+            idx!(octets[0]),
+            Bytes::from_static(LABEL_IN_ADDR),
+            Bytes::from_static(LABEL_ARPA),
+        ])
+    }
+}
+
+#[cfg_attr(feature = "cargo-clippy", allow(indexing_slicing))]
+impl From<Ipv6Addr> for Name {
+    fn from(addr: Ipv6Addr) -> Name {
+        macro_rules! idx {
+            ($idx:expr) => {
+                Bytes::from_static(HEX_DIGITS[$idx as usize])
+            };
+        }
+
+        let octets = addr.octets();
+        Name(vec![
+            idx!(octets[15] & 0xf),
+            idx!(octets[15] >> 4),
+            idx!(octets[14] & 0xf),
+            idx!(octets[14] >> 4),
+            idx!(octets[13] & 0xf),
+            idx!(octets[13] >> 4),
+            idx!(octets[12] & 0xf),
+            idx!(octets[12] >> 4),
+            idx!(octets[11] & 0xf),
+            idx!(octets[11] >> 4),
+            idx!(octets[10] & 0xf),
+            idx!(octets[10] >> 4),
+            idx!(octets[9] & 0xf),
+            idx!(octets[9] >> 4),
+            idx!(octets[8] & 0xf),
+            idx!(octets[8] >> 4),
+            idx!(octets[7] & 0xf),
+            idx!(octets[7] >> 4),
+            idx!(octets[6] & 0xf),
+            idx!(octets[6] >> 4),
+            idx!(octets[5] & 0xf),
+            idx!(octets[5] >> 4),
+            idx!(octets[4] & 0xf),
+            idx!(octets[4] >> 4),
+            idx!(octets[3] & 0xf),
+            idx!(octets[3] >> 4),
+            idx!(octets[2] & 0xf),
+            idx!(octets[2] >> 4),
+            idx!(octets[1] & 0xf),
+            idx!(octets[1] >> 4),
+            idx!(octets[0] & 0xf),
+            idx!(octets[0] >> 4),
+            Bytes::from_static(LABEL_IP6),
+            Bytes::from_static(LABEL_ARPA),
+        ])
+    }
+}
+
 impl FromStr for Name {
     type Err = NameParseError;
 
     fn from_str(s: &str) -> Result<Name, NameParseError> {
+        if s.is_empty() || s == "." {
+            return Ok(Name(Vec::new()));
+        }
         Ok(Name(
             (if s.ends_with('.') {
                 s.split_at(s.len() - 1).0
@@ -220,6 +441,36 @@ impl FromStr for Name {
 impl FromIterator<Bytes> for Name {
     fn from_iter<T: IntoIterator<Item = Bytes>>(iter: T) -> Name {
         Name(iter.into_iter().collect())
+    }
+}
+
+impl FromIterator<Vec<u8>> for Name {
+    fn from_iter<T: IntoIterator<Item = Vec<u8>>>(iter: T) -> Name {
+        iter.into_iter().map(Bytes::from).collect()
+    }
+}
+
+impl<'a> FromIterator<&'a [u8]> for Name {
+    fn from_iter<T: IntoIterator<Item = &'a [u8]>>(iter: T) -> Name {
+        iter.into_iter().map(Bytes::from).collect()
+    }
+}
+
+impl IntoIterator for Name {
+    type Item = Bytes;
+    type IntoIter = ::std::vec::IntoIter<Bytes>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a Name {
+    type Item = &'a Bytes;
+    type IntoIter = ::std::slice::Iter<'a, Bytes>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 
@@ -331,66 +582,6 @@ impl ProtocolEncode for Name {
     }
 }
 
-static LABEL_ARPA: &[u8] = b"arpa";
-static LABEL_IN_ADDR: &[u8] = b"in-addr";
-static LABEL_IP6: &[u8] = b"ip6";
-// This is the digits 0 through 255 concatenated
-static OCTET_DECIMAL: &[u8] =
-    b"012345678910111213141516171819202122232425262728293031323334353637383940414243444546474849505\
-      152535455565758596061626364656667686970717273747576777879808182838485868788899091929394959697\
-      989910010110210310410510610710810911011111211311411511611711811912012112212312412512612712812\
-      913013113213313413513613713813914014114214314414514614714814915015115215315415515615715815916\
-      016116216316416516616716816917017117217317417517617717817918018118218318418518618718818919019\
-      119219319419519619719819920020120220320420520620720820921021121221321421521621721821922022122\
-      222322422522622722822923023123223323423523623723823924024124224324424524624724824925025125225\
-      3254255";
-static HEX_DIGITS: &[u8] = b"0123456789abcdef";
-
-impl From<IpAddr> for Name {
-    fn from(addr: IpAddr) -> Name {
-        match addr {
-            IpAddr::V4(a) => a.into(),
-            IpAddr::V6(a) => a.into(),
-        }
-    }
-}
-
-impl From<Ipv4Addr> for Name {
-    fn from(addr: Ipv4Addr) -> Name {
-        let dec = Bytes::from_static(OCTET_DECIMAL);
-        let mut name = Vec::with_capacity(6);
-        for octet in addr.octets().iter().rev() {
-            name.push(if *octet < 10 {
-                dec.slice(*octet as usize, (*octet + 1) as usize)
-            } else if *octet < 100 {
-                let x = 2 * ((*octet - 10) as usize);
-                dec.slice(x + 10, x + 12)
-            } else {
-                let x = 3 * ((*octet - 100) as usize);
-                dec.slice(x + 190, x + 193)
-            });
-        }
-        name.push(Bytes::from_static(LABEL_IN_ADDR));
-        name.push(Bytes::from_static(LABEL_ARPA));
-        Name(name)
-    }
-}
-
-impl From<Ipv6Addr> for Name {
-    fn from(addr: Ipv6Addr) -> Name {
-        let hex = Bytes::from_static(HEX_DIGITS);
-        let mut name = Vec::with_capacity(34);
-        for octet in addr.octets().iter().rev() {
-            let (low, high) = ((octet & 0xf) as usize, (octet >> 4) as usize);
-            name.push(hex.slice(low, low + 1));
-            name.push(hex.slice(high, high + 1));
-        }
-        name.push(Bytes::from_static(LABEL_IP6));
-        name.push(Bytes::from_static(LABEL_ARPA));
-        Name(name)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use bytes::{Bytes, BytesMut};
@@ -399,7 +590,7 @@ mod tests {
     use std::net::IpAddr;
     use std::str::FromStr;
 
-    use name::{label_from_str, Name};
+    use name::Name;
     use wire::{ProtocolDecode, ProtocolEncode};
 
     macro_rules! label {
@@ -407,6 +598,7 @@ mod tests {
             if $e.is_ascii() {
                 Bytes::from_static($e.as_bytes())
             } else {
+                use name::label_from_str;
                 label_from_str($e).unwrap()
             }
         };
@@ -434,7 +626,13 @@ mod tests {
 
     #[test]
     fn empty_label() {
-        assert!(Name::from_str("").is_err());
+        assert!(Name::from_str("example..invalid").is_err());
+    }
+
+    #[test]
+    fn root() {
+        assert_eq!(Name::from_str("").unwrap(), Name::default());
+        assert_eq!(Name::from_str(".").unwrap(), Name::default());
     }
 
     #[test]
@@ -504,8 +702,8 @@ mod tests {
     #[test]
     fn from_ipv4addr() {
         assert_eq!(
-            format!("{}", Name::from(IpAddr::V4([192, 0, 2, 1].into()))),
-            "1.2.0.192.in-addr.arpa"
+            format!("{}", Name::from(IpAddr::V4([192, 0, 2, 42].into()))),
+            "42.2.0.192.in-addr.arpa"
         );
     }
 
@@ -518,6 +716,15 @@ mod tests {
             ),
             "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa"
         );
+    }
+
+    // Check for slicing panics in impl From<IpAddr> for Name.
+    #[test]
+    fn from_ipaddr_exhaustive() {
+        for i in 0..=u8::max_value() {
+            Name::from(IpAddr::V4([i, 0, 0, 0].into()));
+            Name::from(IpAddr::V6([i as u16, 0, 0, 0, 0, 0, 0, 0].into()));
+        }
     }
 
     #[test]

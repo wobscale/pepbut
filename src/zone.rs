@@ -62,7 +62,7 @@ impl Zone {
 
     /// Remove a record from the zone.
     pub fn remove<'a>(&'a mut self, record: &'a Record) {
-        if let Some(h) = self.records.get_mut(&record.name()) {
+        if let Some(h) = self.records.get_mut(record.name()) {
             if let Some(mut v) = h.get_mut(&record.record_type()) {
                 if let Some(pos) = v.iter().position(|x| x == record) {
                     v.remove(pos);
@@ -72,8 +72,8 @@ impl Zone {
                 h.remove(&record.record_type());
             }
         }
-        if self.records.get(&record.name()).map(|h| h.is_empty()) == Some(true) {
-            self.records.remove(&record.name());
+        if self.records.get(record.name()).map(|h| h.is_empty()) == Some(true) {
+            self.records.remove(record.name());
         }
     }
 

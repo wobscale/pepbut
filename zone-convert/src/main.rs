@@ -21,7 +21,6 @@ use pepbut::zone::Zone;
 use std::error::Error;
 use std::fmt::{self, Display};
 use std::fs::{self, File};
-use std::iter::FromIterator;
 use trust_dns::error::ParseErrorKind;
 use trust_dns::rr::{LowerName, Name as TrustDnsName, RData};
 use trust_dns::serialize::txt::{Lexer, Parser};
@@ -50,7 +49,7 @@ fn from_name(name: TrustDnsName) -> Name {
 }
 
 fn from_lower(name: LowerName) -> Name {
-    Name::from_iter(TrustDnsName::from(name).into_iter().map(|b| b.into()))
+    TrustDnsName::from(name).into_iter().collect()
 }
 
 pub fn read(s: &str) -> Result<Zone, failure::Error> {
