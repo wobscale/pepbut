@@ -26,8 +26,8 @@ use std::iter::FromIterator;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::{self, FromStr};
 
+use msgpack::Msgpack;
 use wire::{ProtocolDecode, ProtocolDecodeError, ProtocolEncode};
-use Msgpack;
 
 /// Errors that can occur while parsing a `Name`.
 #[derive(Debug, Fail)]

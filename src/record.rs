@@ -11,9 +11,9 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, Ipv6Addr};
 
+use msgpack::Msgpack;
 use name::Name;
 use wire::ProtocolEncode;
-use Msgpack;
 
 pub trait RecordTrait {
     /// The name the record belongs to.

@@ -10,10 +10,10 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::str::FromStr;
 
+use msgpack::Msgpack;
 use name::{Name, NameParseError};
 use record::{Record, RecordTrait};
 use wire::ProtocolEncode;
-use Msgpack;
 
 /// A zone is a collection of records belonging to an origin.
 #[derive(Debug, Clone, PartialEq)]
