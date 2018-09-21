@@ -14,7 +14,6 @@
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use cast::{self, u16, u32, u8, usize};
-use failure;
 use idna::uts46;
 use rmp;
 use std::borrow::Borrow;
@@ -28,7 +27,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::ops::Deref;
 use std::str::{self, FromStr};
 
-use msgpack::Msgpack;
+use msgpack::{Msgpack, ZoneReadError, ZoneWriteError};
 use wire::{ProtocolDecode, ProtocolDecodeError, ProtocolEncode};
 
 /// Errors that can occur while parsing a `Name`.
@@ -475,7 +474,7 @@ impl<'a> IntoIterator for &'a Name {
 }
 
 impl Msgpack for Name {
-    fn from_msgpack(reader: &mut impl Read, labels: &[Bytes]) -> Result<Name, failure::Error> {
+    fn from_msgpack(reader: &mut impl Read, labels: &[Bytes]) -> Result<Name, ZoneReadError> {
         let label_len = rmp::decode::read_array_len(reader)? as usize;
         let mut name_labels = Vec::with_capacity(label_len);
         for _ in 0..label_len {
@@ -483,7 +482,7 @@ impl Msgpack for Name {
             name_labels.push(
                 labels
                     .get(label_idx)
-                    .ok_or_else(|| format_err!("invalid label index: {}", label_idx))?
+                    .ok_or_else(|| ZoneReadError::LabelIndexOutOfRange)?
                     .clone(),
             );
         }
@@ -495,7 +494,7 @@ impl Msgpack for Name {
         &self,
         writer: &mut impl Write,
         labels: &mut Vec<Bytes>,
-    ) -> Result<(), failure::Error> {
+    ) -> Result<(), ZoneWriteError> {
         rmp::encode::write_array_len(writer, u32(self.0.len())?)?;
 
         for label in &self.0 {

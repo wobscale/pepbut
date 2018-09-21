@@ -4,14 +4,13 @@
 
 use bytes::{BufMut, Bytes, BytesMut};
 use cast::{self, u16, u32, u8};
-use failure;
 use rmp;
 use std::cmp::min;
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use msgpack::Msgpack;
+use msgpack::{check_len, Msgpack, ZoneReadError, ZoneWriteError};
 use name::Name;
 use wire::ProtocolEncode;
 
@@ -103,11 +102,9 @@ impl RecordTrait for Record {
 }
 
 impl Msgpack for Record {
-    fn from_msgpack(reader: &mut impl Read, labels: &[Bytes]) -> Result<Record, failure::Error> {
+    fn from_msgpack(reader: &mut impl Read, labels: &[Bytes]) -> Result<Record, ZoneReadError> {
         // rdata reads two values
-        if rmp::decode::read_array_len(reader)? != 4 {
-            bail!("record must be array of 4 elements");
-        }
+        check_len("record", 4, rmp::decode::read_array_len(reader)?)?;
 
         let name = Name::from_msgpack(reader, labels)?;
         let ttl = rmp::decode::read_int(reader)?;
@@ -120,7 +117,7 @@ impl Msgpack for Record {
         &self,
         writer: &mut impl Write,
         labels: &mut Vec<Bytes>,
-    ) -> Result<(), failure::Error> {
+    ) -> Result<(), ZoneWriteError> {
         // rdata writes two values
         rmp::encode::write_array_len(writer, 4)?;
 
@@ -210,37 +207,27 @@ impl RData {
 }
 
 impl Msgpack for RData {
-    fn from_msgpack(reader: &mut impl Read, labels: &[Bytes]) -> Result<RData, failure::Error> {
+    fn from_msgpack(reader: &mut impl Read, labels: &[Bytes]) -> Result<RData, ZoneReadError> {
         Ok(match rmp::decode::read_int(reader)? {
             // A: addr
             1 => {
-                let bin_len = rmp::decode::read_bin_len(reader)?;
-                if bin_len == 4 {
-                    let mut addr = [0; 4];
-                    reader.read_exact(&mut addr)?;
-                    RData::A(addr.into())
-                } else {
-                    bail!("A rdata must be 4 bytes");
-                }
+                check_len("A data", 4, rmp::decode::read_bin_len(reader)?)?;
+                let mut addr = [0; 4];
+                reader.read_exact(&mut addr)?;
+                RData::A(addr.into())
             }
             // AAAA: addr
             28 => {
-                let bin_len = rmp::decode::read_bin_len(reader)?;
-                if bin_len == 16 {
-                    let mut addr = [0; 16];
-                    reader.read_exact(&mut addr)?;
-                    RData::AAAA(addr.into())
-                } else {
-                    bail!("AAAA rdata must be 16 bytes");
-                }
+                check_len("AAAA data", 16, rmp::decode::read_bin_len(reader)?)?;
+                let mut addr = [0; 16];
+                reader.read_exact(&mut addr)?;
+                RData::AAAA(addr.into())
             }
             // CNAME: name
             5 => RData::CNAME(Name::from_msgpack(reader, labels)?),
             // MX: preference exchange
             15 => {
-                if rmp::decode::read_array_len(reader)? != 2 {
-                    bail!("MX rdata must be array of 2 elements");
-                }
+                check_len("MX data", 2, rmp::decode::read_array_len(reader)?)?;
                 let preference = rmp::decode::read_int(reader)?;
                 let exchange = Name::from_msgpack(reader, labels)?;
                 RData::MX {
@@ -252,9 +239,7 @@ impl Msgpack for RData {
             2 | 12 => RData::NS(Name::from_msgpack(reader, labels)?),
             // SRV: priority weight port target
             33 => {
-                if rmp::decode::read_array_len(reader)? != 4 {
-                    bail!("SRV rdata must be array of 4 elements");
-                }
+                check_len("SRV data", 4, rmp::decode::read_array_len(reader)?)?;
                 let priority = rmp::decode::read_int(reader)?;
                 let weight = rmp::decode::read_int(reader)?;
                 let port = rmp::decode::read_int(reader)?;
@@ -269,9 +254,12 @@ impl Msgpack for RData {
             // TXT: [str]
             16 => {
                 let len = rmp::decode::read_str_len(reader)?;
-                RData::TXT(String::from_utf8(read_exact!(reader, len)?)?)
+                RData::TXT(
+                    String::from_utf8(read_exact!(reader, len)?)
+                        .map_err(|err| ZoneReadError::TxtRecordNotUtf8(err.utf8_error()))?,
+                )
             }
-            s => bail!("unrecognized rdata type: {}", s),
+            s => return Err(ZoneReadError::UnsupportedRecordType(s)),
         })
     }
 
@@ -279,7 +267,7 @@ impl Msgpack for RData {
         &self,
         writer: &mut impl Write,
         labels: &mut Vec<Bytes>,
-    ) -> Result<(), failure::Error> {
+    ) -> Result<(), ZoneWriteError> {
         rmp::encode::write_uint(writer, self.record_type().into())?;
 
         match *self {

@@ -4,14 +4,13 @@
 
 use bytes::{BufMut, Bytes, BytesMut};
 use cast::{self, i64, u32};
-use failure;
 use rmp::{self, Marker};
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::str::FromStr;
 
-use msgpack::Msgpack;
-use name::{Name, NameParseError};
+use msgpack::{check_len, Msgpack, ZoneReadError, ZoneWriteError};
+use name::Name;
 use record::{Record, RecordTrait};
 use wire::ProtocolEncode;
 
@@ -126,21 +125,21 @@ impl Zone {
     ///
     /// The reader is required to implement `Seek` due to the need to read the labels at the end of
     /// the zone file first before processing the rest of the zone.
-    pub fn read_from(reader: &mut (impl Read + Seek)) -> Result<Zone, failure::Error> {
-        if rmp::decode::read_array_len(reader)? != 5 {
-            bail!("zone must be array of 5 elements");
-        }
+    pub fn read_from(reader: &mut (impl Read + Seek)) -> Result<Zone, ZoneReadError> {
+        check_len("zone", 5, rmp::decode::read_array_len(reader)?)?;
 
         reader.seek(SeekFrom::End(-9))?;
-        let label_offset = rmp::decode::read_u64(reader)?;
+        let label_offset = rmp::decode::read_i64(reader)?;
 
-        reader.seek(SeekFrom::End(-i64(label_offset)?))?;
+        reader.seek(SeekFrom::End(-label_offset))?;
         let label_len = rmp::decode::read_array_len(reader)? as usize;
         let mut labels = Vec::with_capacity(label_len);
         for _ in 0..label_len {
             let len = rmp::decode::read_str_len(reader)?;
             let s = read_exact!(reader, len)?;
-            ensure!(s.len() < 64, NameParseError::LabelTooLong(s.len()));
+            if s.len() > 63 {
+                return Err(ZoneReadError::LabelTooLong(s.len()));
+            }
             labels.push(Bytes::from(s.to_ascii_lowercase()));
         }
 
@@ -160,7 +159,7 @@ impl Zone {
     }
 
     /// Serializes a zone file to a writer in one pass.
-    pub fn write_to(&self, writer: &mut impl Write) -> Result<(), failure::Error> {
+    pub fn write_to(&self, writer: &mut impl Write) -> Result<(), ZoneWriteError> {
         rmp::encode::write_array_len(writer, 5)?;
         let mut labels = Vec::new();
 
@@ -186,7 +185,7 @@ impl Zone {
             bytes_written += label.len() as u64 + if label.len() < 32 { 1 } else { 2 };
         }
 
-        rmp::encode::write_u64(writer, bytes_written + 9)?;
+        rmp::encode::write_i64(writer, i64(bytes_written + 9)?)?;
 
         Ok(())
     }
