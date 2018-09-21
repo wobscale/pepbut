@@ -41,3 +41,12 @@ pub mod name;
 pub mod record;
 pub mod wire;
 pub mod zone;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn read_exact() {
+        assert_eq!(read_exact!(&b"hello world"[..], 5).unwrap(), b"hello");
+        assert!(read_exact!(&b"hello world"[..], 15).is_err());
+    }
+}

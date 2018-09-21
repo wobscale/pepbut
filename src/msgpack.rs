@@ -13,12 +13,3 @@ pub(crate) trait Msgpack: Sized {
     /// Serialize this object to a MessagePack reader.
     fn to_msgpack(&self, &mut impl Write, labels: &mut Vec<Bytes>) -> Result<(), failure::Error>;
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn read_exact() {
-        assert_eq!(read_exact!(&b"hello world"[..], 5).unwrap(), b"hello");
-        assert!(read_exact!(&b"hello world"[..], 15).is_err());
-    }
-}
